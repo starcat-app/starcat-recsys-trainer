@@ -123,16 +123,22 @@ class OfflineEvaluator:
 def _load_subject_sets(
     path: Path, target_split: str
 ) -> tuple[dict[str, set[int]], dict[str, set[int]], set[int]]:
-    table = pq.read_table(path, columns=["source_subject_id", "repo_id", "split"])
+    table = pq.read_table(
+        path,
+        columns=["source_subject_id", "repo_id", "split", "training_eligible"],
+    )
     histories: dict[str, set[int]] = defaultdict(set)
     truths: dict[str, set[int]] = defaultdict(set)
     catalog: set[int] = set()
     for row in table.to_pylist():
         subject = str(row["source_subject_id"])
         repo_id = int(row["repo_id"])
-        catalog.add(repo_id)
         if row["split"] == "train":
             histories[subject].add(repo_id)
+            # Coverage 的分母必须是训练时模型可见的 catalog，不能被 validation/test
+            # 中首次出现的 repo 改变，否则模型不变时验证指标仍会漂移。
+            if row["training_eligible"]:
+                catalog.add(repo_id)
         elif row["split"] == target_split:
             truths[subject].add(repo_id)
     return dict(histories), dict(truths), catalog
