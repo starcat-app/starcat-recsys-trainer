@@ -20,3 +20,4 @@ All notable changes to Starcat Recommendation Pipeline are documented here.
 - 第二轮审查修复 run/Registry 不可变与路径安全、跨 run ETag cache、GitHub 403 分类和 SVD 退化输入。
 - 第三轮审查将 warning 纳入默认门禁，补齐 GitHub HTTP Adapter 测试，完成构建和进度收口。
 - 修复 GH Archive 通配符匹配 `yesterday` View 和空预算序列化问题，并完成 ADC、真实查询与 Arrow 转换验证。
+- 第四轮审查完成 BigQuery 生产链路、测试、文档和工程进度收口。
