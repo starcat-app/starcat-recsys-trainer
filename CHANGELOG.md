@@ -12,3 +12,4 @@ All notable changes to Starcat Recommendation Pipeline are documented here.
 - 新增 Popular 离线基线，作为冷启动 fallback 和评估下限。
 - 新增基于稀疏隐式反馈矩阵的 TruncatedSVD item-to-item 推荐基线。
 - 新增时间衰减 co-star 核心训练器，包含主体权重、半衰期、cosine 归一化、shrinkage 和 pair 上限。
+- 新增 Recall、NDCG、MRR 和 Coverage 时间留出评估，支持多模型与 co-star ablation 变体对比。

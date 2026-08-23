@@ -32,6 +32,7 @@ class CoStarConfig:
     minimum_support: float = 0.0
     maximum_repositories_per_subject: int = 2_000
     top_k: int = 100
+    model_name: str = "costar"
 
     def __post_init__(self) -> None:
         if parse_datetime(self.reference_time) is None:
@@ -46,15 +47,19 @@ class CoStarConfig:
             raise ValueError("maximum_repositories_per_subject 不能小于 2")
         if self.top_k <= 0:
             raise ValueError("top_k 必须大于 0")
+        if not self.model_name or not self.model_name.replace("_", "").isalnum():
+            raise ValueError("model_name 只能包含字母、数字和下划线")
 
 
 class CoStarTrainer:
     """生成对称的 item-to-item co-star Top-K 边。"""
 
-    name = "costar"
-
     def __init__(self, config: CoStarConfig) -> None:
         self._config = config
+
+    @property
+    def name(self) -> str:
+        return self._config.model_name
 
     def train(self, context: TaskContext, inputs: list[Artifact]) -> list[Artifact]:
         dataset = training_dataset(inputs)
