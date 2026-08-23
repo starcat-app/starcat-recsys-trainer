@@ -58,6 +58,14 @@ def test_publishes_verifies_and_queries_immutable_bundle(tmp_path: Path) -> None
         publisher.publish(
             TaskContext("run-2", tmp_path / "workspace-2", "sha256:config", 7), inputs
         )
+    with pytest.raises(ValueError, match="model_version"):
+        registry.activate("../v1")
+    checksums_path = bundle / "checksums.json"
+    checksums = json.loads(checksums_path.read_text())
+    checksums["../outside"] = "sha256:bad"
+    write_json_atomic(checksums_path, checksums)
+    with pytest.raises(ValueError, match="文件名不合法"):
+        verify_bundle(bundle)
 
 
 def test_rejects_metric_gate_failure(tmp_path: Path) -> None:

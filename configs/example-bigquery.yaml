@@ -14,6 +14,7 @@ sources:
     repo_ids_from_canonical: true
     repository_limit: 5000
     maximum_requests: 5000
+    cache_directory: ../workspace/cache/github-metadata
     token_env: GITHUB_TOKEN
     api_version: "2026-03-10"
 

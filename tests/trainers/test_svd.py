@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from starcat_recsys.artifacts import artifact_for
 from starcat_recsys.interfaces import TaskContext
@@ -41,3 +42,28 @@ def test_svd_finds_repositories_with_shared_subjects(tmp_path: Path) -> None:
     assert nearest[2] == 1
     assert nearest[3] == 4
     assert nearest[4] == 3
+
+
+def test_svd_rejects_homogeneous_matrix_without_runtime_warning(tmp_path: Path) -> None:
+    path = tmp_path / "dataset.parquet"
+    pq.write_table(
+        pa.Table.from_pylist(
+            [
+                {
+                    "source_subject_id": subject,
+                    "repo_id": repo_id,
+                    "sample_weight": 1.0,
+                    "split": "train",
+                }
+                for subject in ["u1", "u2"]
+                for repo_id in [1, 2]
+            ]
+        ),
+        path,
+    )
+
+    with pytest.raises(ValueError, match="列方差"):
+        SVDTrainer(SVDConfig(components=1, top_k=1)).train(
+            TaskContext("run", tmp_path / "workspace", "sha256:test", 7),
+            [artifact_for(path, "training_dataset", {})],
+        )

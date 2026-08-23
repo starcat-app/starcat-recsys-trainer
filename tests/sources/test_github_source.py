@@ -72,6 +72,22 @@ def test_collect_reuses_cached_payload_on_304(tmp_path: Path) -> None:
     assert artifacts[0].metadata["cache_hits"] == 1
 
 
+def test_collect_reuses_configured_cache_across_runs(tmp_path: Path) -> None:
+    cache = tmp_path / "shared-cache"
+    config = GitHubMetadataConfig(maximum_requests=1, cache_directory=cache)
+    GitHubRepositoryMetadataSource([1], config, FakeGitHubGateway({1: _response(1)})).collect(
+        _context(tmp_path / "run-1")
+    )
+    second = FakeGitHubGateway({1: GitHubResponse(304, {}, None)})
+
+    artifact = GitHubRepositoryMetadataSource([1], config, second).collect(
+        _context(tmp_path / "run-2")
+    )[0]
+
+    assert second.calls == [(1, '"v1"')]
+    assert artifact.metadata["cache_hits"] == 1
+
+
 def test_collect_refuses_request_plan_over_cap(tmp_path: Path) -> None:
     context = _context(tmp_path)
     source = GitHubRepositoryMetadataSource(
@@ -97,6 +113,15 @@ def test_collect_reports_rate_limit_without_secret(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="remaining=0, reset=123"):
         GitHubRepositoryMetadataSource([1], GitHubMetadataConfig(), gateway).collect(context)
     assert gateway.closed
+
+
+def test_collect_distinguishes_permission_denied_from_rate_limit(tmp_path: Path) -> None:
+    gateway = FakeGitHubGateway({1: GitHubResponse(403, {}, None)})
+
+    with pytest.raises(RuntimeError, match="权限不足"):
+        GitHubRepositoryMetadataSource([1], GitHubMetadataConfig(), gateway).collect(
+            _context(tmp_path)
+        )
 
 
 def _artifact_path(artifact: Artifact) -> Path:

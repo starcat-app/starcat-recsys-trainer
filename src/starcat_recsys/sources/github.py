@@ -27,6 +27,7 @@ class GitHubMetadataConfig:
     api_version: str = "2026-03-10"
     timeout_seconds: float = 30.0
     maximum_requests: int = 5_000
+    cache_directory: Path | None = None
 
     def __post_init__(self) -> None:
         if not self.token_env:
@@ -111,7 +112,8 @@ class GitHubRepositoryMetadataSource:
             )
 
         output_directory = context.workspace / "raw" / "github_metadata"
-        cache_directory = output_directory / "cache"
+        cache_directory = self._config.cache_directory or output_directory / "cache"
+        output_directory.mkdir(parents=True, exist_ok=True)
         cache_directory.mkdir(parents=True, exist_ok=True)
         gateway = self._gateway or HttpxGitHubGateway(self._config)
         rows: list[dict[str, Any]] = []
@@ -131,7 +133,10 @@ class GitHubRepositoryMetadataSource:
                 if response.status_code == 404:
                     not_found.append(repo_id)
                     continue
-                if response.status_code in {403, 429}:
+                if response.status_code == 429 or (
+                    response.status_code == 403
+                    and response.headers.get("x-ratelimit-remaining") == "0"
+                ):
                     remaining = response.headers.get("x-ratelimit-remaining", "unknown")
                     reset = response.headers.get(
                         "x-ratelimit-reset", response.headers.get("retry-after", "unknown")
@@ -139,6 +144,8 @@ class GitHubRepositoryMetadataSource:
                     raise RuntimeError(
                         f"GitHub API 限流：repo_id={repo_id}, remaining={remaining}, reset={reset}"
                     )
+                if response.status_code == 403:
+                    raise RuntimeError(f"GitHub API 权限不足：repo_id={repo_id}, status=403")
                 if response.status_code != 200 or response.payload is None:
                     raise RuntimeError(
                         f"GitHub API 请求失败：repo_id={repo_id}, status={response.status_code}"

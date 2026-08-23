@@ -78,6 +78,10 @@ class SVDTrainer:
             shape=(len(subjects), len(repo_ids)),
             dtype=np.float32,
         )
+        column_mean = np.asarray(matrix.mean(axis=0)).ravel()
+        column_square_mean = np.asarray(matrix.power(2).mean(axis=0)).ravel()
+        if float(np.sum(column_square_mean - np.square(column_mean))) <= 1e-12:
+            raise ValueError("SVD 训练矩阵没有可分解的列方差")
         component_count = min(self._config.components, min(matrix.shape) - 1)
         svd = TruncatedSVD(n_components=component_count, random_state=context.random_seed)
         svd.fit(matrix)

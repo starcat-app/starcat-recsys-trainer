@@ -31,8 +31,7 @@ class BundleConfig:
     git_commit: str = "unknown"
 
     def __post_init__(self) -> None:
-        if not self.model_version or "/" in self.model_version or ".." in self.model_version:
-            raise ValueError("model_version 不合法")
+        _validate_version(self.model_version)
         if not self.selected_model:
             raise ValueError("selected_model 不能为空")
 
@@ -120,6 +119,7 @@ class LocalModelRegistry:
         return target
 
     def activate(self, version: str) -> None:
+        _validate_version(version)
         target = self.root / "versions" / version
         verify_bundle(target)
         write_json_atomic(
@@ -139,7 +139,14 @@ def verify_bundle(bundle: Path) -> dict[str, Any]:
             raise ValueError(f"ServingBundle 缺少文件：{path.name}")
     checksums = json.loads(checksums_path.read_text(encoding="utf-8"))
     for filename, expected in checksums.items():
-        actual = sha256_file(bundle / filename)
+        if not isinstance(filename, str) or Path(filename).name != filename:
+            raise ValueError(f"ServingBundle checksum 文件名不合法：{filename}")
+        candidate = bundle / filename
+        if candidate.is_symlink() or not candidate.is_file():
+            raise ValueError(f"ServingBundle checksum 目标不合法：{filename}")
+        if not isinstance(expected, str) or not expected.startswith("sha256:"):
+            raise ValueError(f"ServingBundle checksum 格式不合法：{filename}")
+        actual = sha256_file(candidate)
         if actual != expected:
             raise ValueError(f"ServingBundle checksum 不匹配：{filename}")
     with sqlite3.connect(f"file:{database_path}?mode=ro", uri=True) as database:
@@ -163,6 +170,8 @@ def query_bundle(
 
     if not seed_repo_ids or any(repo_id <= 0 for repo_id in seed_repo_ids):
         raise ValueError("seed_repo_ids 必须是非空正整数列表")
+    if any(repo_id <= 0 for repo_id in (exclude_repo_ids or [])):
+        raise ValueError("exclude_repo_ids 必须全部为正整数")
     if limit <= 0 or limit > 500:
         raise ValueError("limit 必须在 1..500 范围")
     verify_bundle(bundle)
@@ -285,3 +294,15 @@ def _check_metric_gates(metrics: dict[str, Any], gates: dict[str, float]) -> Non
     ]
     if failures:
         raise RuntimeError("模型指标门禁未通过：" + "; ".join(failures))
+
+
+def _validate_version(version: str) -> None:
+    if (
+        not version
+        or any(
+            character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+            for character in version
+        )
+        or ".." in version
+    ):
+        raise ValueError("model_version 只能包含字母、数字、点、下划线和连字符，且不能包含 ..")

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 import yaml
 
 from starcat_recsys.artifacts import artifact_for
@@ -15,14 +16,23 @@ from starcat_recsys.pipeline import _repository_ids_from_canonical, run_pipeline
 def test_runs_end_to_end_pipeline_and_cli_query(tmp_path: Path, capsys: object) -> None:
     interactions = tmp_path / "interactions.jsonl"
     rows = []
-    for subject in ["u1", "u2", "u3"]:
+    subject_rows = {
+        "u1": [
+            (1, "2025-01-01T00:00:00Z"),
+            (2, "2025-02-01T00:00:00Z"),
+            (3, "2025-09-01T00:00:00Z"),
+        ],
+        "u2": [
+            (1, "2025-01-01T00:00:00Z"),
+            (2, "2025-02-01T00:00:00Z"),
+            (3, "2025-09-01T00:00:00Z"),
+        ],
+        "u3": [(1, "2025-01-01T00:00:00Z"), (3, "2025-09-01T00:00:00Z")],
+    }
+    for subject, subject_interactions in subject_rows.items():
         rows.extend(
             _interaction(subject, repo_id, occurred_at)
-            for repo_id, occurred_at in [
-                (1, "2025-01-01T00:00:00Z"),
-                (2, "2025-02-01T00:00:00Z"),
-                (3, "2025-09-01T00:00:00Z"),
-            ]
+            for repo_id, occurred_at in subject_interactions
         )
     interactions.write_text("".join(json.dumps(row) + "\n" for row in rows))
     repositories = tmp_path / "repositories.jsonl"
@@ -90,6 +100,9 @@ def test_runs_end_to_end_pipeline_and_cli_query(tmp_path: Path, capsys: object) 
     output = capsys.readouterr().out  # type: ignore[attr-defined]
     assert "model_version" in output
     assert "repo_id" in output
+
+    with pytest.raises(FileExistsError, match="run_id 已存在"):
+        run_pipeline(config_path)
 
 
 def _interaction(subject: str, repo_id: int, occurred_at: str) -> dict[str, object]:

@@ -46,7 +46,9 @@ def run_pipeline(config_path: Path) -> Artifact:
     run_id = _required_string(document, "run_id")
     random_seed = int(document.get("random_seed", 42))
     context = TaskContext(run_id, workspace / "runs" / run_id, config_hash, random_seed)
-    context.workspace.mkdir(parents=True, exist_ok=True)
+    if context.workspace.exists():
+        raise FileExistsError(f"run_id 已存在，不允许覆盖：{run_id}")
+    context.workspace.mkdir(parents=True)
     executor = LocalExecutor()
 
     raw_artifacts: list[Artifact] = []
@@ -210,6 +212,11 @@ def _source_connector(
                 api_version=str(config.get("api_version", "2026-03-10")),
                 timeout_seconds=float(config.get("timeout_seconds", 30)),
                 maximum_requests=int(config.get("maximum_requests", 5_000)),
+                cache_directory=(
+                    _resolve_path(base, str(config["cache_directory"]))
+                    if config.get("cache_directory")
+                    else None
+                ),
             ),
         )
     if source_type == "bigquery":
@@ -294,11 +301,14 @@ def _required_list(document: dict[str, Any], key: str) -> list[Any]:
 
 
 def _git_commit() -> str:
+    repository_root = Path(__file__).resolve().parents[2]
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         capture_output=True,
         check=False,
+        cwd=repository_root,
         text=True,
+        timeout=5,
     )
     return result.stdout.strip() if result.returncode == 0 else "unknown"
 

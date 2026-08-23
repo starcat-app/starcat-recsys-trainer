@@ -17,3 +17,4 @@ All notable changes to Starcat Recommendation Pipeline are documented here.
 - 新增 YAML 端到端单机管道、任务执行记录、Bundle 校验/查询和 Registry 激活 CLI。
 - 新增可直接运行的本地完整示例、BigQuery 配置样例和中文操作手册。
 - 完成 Starcat `supports/` 独立私有项目登记。
+- 第二轮审查修复 run/Registry 不可变与路径安全、跨 run ETag cache、GitHub 403 分类和 SVD 退化输入。
