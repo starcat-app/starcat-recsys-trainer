@@ -40,3 +40,9 @@ publish:
   model_version: example-collection-local-v1
   selected_model: costar
   metric_gates: {}
+  recommend_api:
+    base_url: http://127.0.0.1:5005
+    publish_key_env: STARCAT_RECOMMEND_PUBLISH_KEY
+    timeout_seconds: 120
+    maximum_bundle_bytes: 536870912
+    activate: true

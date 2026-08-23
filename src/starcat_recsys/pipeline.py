@@ -24,6 +24,7 @@ from starcat_recsys.dataset import DatasetConfig, DuckDBDatasetBuilder
 from starcat_recsys.evaluation import EvaluationConfig, OfflineEvaluator
 from starcat_recsys.executor import LocalExecutor
 from starcat_recsys.interfaces import Artifact, SourceConnector, TaskContext
+from starcat_recsys.publishers import RecommendAPIBundlePublisher, RecommendAPIPublishConfig
 from starcat_recsys.sources.bigquery import BigQueryConfig, BigQueryWatchEventSource
 from starcat_recsys.sources.github import (
     GitHubMetadataConfig,
@@ -184,6 +185,26 @@ def run_pipeline(config_path: Path) -> Artifact:
     bundle = executor.execute(
         "publish", lambda: publisher.publish(context, [*dataset, *models, *metrics])
     )[0]
+    delivery: Artifact | None = None
+    recommend_api_config = _optional_dict(publish_config, "recommend_api")
+    if recommend_api_config:
+        delivery_publisher = RecommendAPIBundlePublisher(
+            RecommendAPIPublishConfig(
+                base_url=_required_string(recommend_api_config, "base_url"),
+                publish_key_env=str(
+                    recommend_api_config.get("publish_key_env", "STARCAT_RECOMMEND_PUBLISH_KEY")
+                ),
+                timeout_seconds=float(recommend_api_config.get("timeout_seconds", 120)),
+                maximum_bundle_bytes=int(
+                    recommend_api_config.get("maximum_bundle_bytes", 512 * 1024 * 1024)
+                ),
+                activate=bool(recommend_api_config.get("activate", True)),
+            )
+        )
+        delivery = executor.execute(
+            "publish:recommend-api",
+            lambda: delivery_publisher.publish(context, [bundle]),
+        )[0]
     write_json_atomic(
         context.workspace / "run-manifest.json",
         {
@@ -192,6 +213,11 @@ def run_pipeline(config_path: Path) -> Artifact:
             "config_hash": config_hash,
             "tasks": [asdict(item) for item in executor.executions],
             "bundle": {"uri": bundle.uri, "checksum": bundle.checksum, **bundle.metadata},
+            "delivery": (
+                {"uri": delivery.uri, "checksum": delivery.checksum, **delivery.metadata}
+                if delivery is not None
+                else None
+            ),
         },
     )
     return bundle

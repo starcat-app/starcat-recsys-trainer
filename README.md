@@ -2,7 +2,7 @@
 
 `starcat-recsys-trainer` 负责从多种数据源采集公开仓库行为和 metadata，转换为统一 Parquet 格式，完成数据质量检查、离线训练、时间留出评估和 ServingBundle 发布。
 
-当前仓库为私有项目，不提供生产 REST API。未来 Starcat 和 `starcat-recsys-api` 通过只读 ServingBundle 接入，与训练数据和匿名主体隔离。
+当前仓库为私有项目，不提供生产 REST API。训练完成后可把已校验 Bundle 发布到 `starcat-recommend-api /api/v2`；在线服务只读 ServingBundle，与训练数据和匿名主体隔离。
 
 ## 已实现能力
 
@@ -16,6 +16,7 @@
 - Popular、TruncatedSVD、时间衰减 co-star 和两个 ablation 变体。
 - Recall@K、NDCG@K、MRR@K、Coverage 离线评估和指标发布门禁。
 - 不可变本地 Model Registry、SQLite ServingBundle、checksum/quick-check 校验和查询 CLI。
+- `RecommendAPIBundlePublisher` 使用独立发布密钥上传、激活 Bundle，并生成不含凭据的交付回执。
 - YAML 驱动的单机端到端管道，节点通过 artifact 接口可继续扩展数据源和训练器。
 
 ## 快速开始
@@ -53,6 +54,8 @@ SourceConnector
   -> OfflineEvaluator
   -> ServingBundlePublisher
   -> LocalModelRegistry
+  -> RecommendAPIBundlePublisher（可选）
+  -> starcat-recommend-api /api/v2
 ```
 
 数据源、标准化、数据集、训练、评估和发布都通过稳定 Protocol 连接。当前 `LocalExecutor` 在单机编排；后续多机执行可替换 executor 和 artifact storage，不需要把 BigQuery、GitHub 或 Starcat DTO 带入训练器。
@@ -63,6 +66,7 @@ SourceConnector
 - 本地 Starcat 文件源在 raw landing 读取后立即 HMAC 转换 `participant_id`；Collection 源只接收服务端已 HMAC 的 `subject_id`，后续产物都不保留原值。
 - GH Archive 和 Starcat 的主体标识不跨来源连接。
 - Token、GCP 凭据和 HMAC key 只通过环境提供，不写入配置或 artifact。
+- Recommend API 发布密钥只从环境变量读取，交付回执不记录密钥或服务端错误正文。
 - 在线查询只读 ServingBundle，不读取 raw、canonical 或 dataset。
 
 ## 文档
