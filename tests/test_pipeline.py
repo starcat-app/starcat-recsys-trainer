@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 
 import pyarrow as pa
@@ -10,7 +11,11 @@ import yaml
 
 from starcat_recsys.artifacts import artifact_for
 from starcat_recsys.cli import main
-from starcat_recsys.pipeline import _repository_ids_from_canonical, run_pipeline
+from starcat_recsys.pipeline import (
+    _repository_ids_from_canonical,
+    _training_reference_time,
+    run_pipeline,
+)
 
 
 def test_runs_end_to_end_pipeline_and_cli_query(tmp_path: Path, capsys: object) -> None:
@@ -127,3 +132,20 @@ def test_selects_bounded_popular_repositories_for_deferred_metadata(tmp_path: Pa
     repo_ids = _repository_ids_from_canonical([artifact_for(path, "canonical_interactions", {})], 2)
 
     assert repo_ids == [1, 2]
+
+
+def test_rejects_training_reference_time_different_from_train_end() -> None:
+    with pytest.raises(ValueError, match="reference_time"):
+        _training_reference_time(
+            {"reference_time": "2025-06-02T00:00:00Z"},
+            datetime.fromisoformat("2025-06-01T00:00:00+00:00"),
+        )
+
+
+def test_accepts_equivalent_training_reference_time_with_different_offset() -> None:
+    reference_time = _training_reference_time(
+        {"reference_time": "2025-06-01T08:00:00+08:00"},
+        datetime.fromisoformat("2025-06-01T00:00:00+00:00"),
+    )
+
+    assert reference_time.isoformat() == "2025-06-01T08:00:00+08:00"

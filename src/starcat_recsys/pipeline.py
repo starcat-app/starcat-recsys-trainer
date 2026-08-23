@@ -89,12 +89,14 @@ def run_pipeline(config_path: Path) -> Artifact:
             lambda: CanonicalNormalizer().normalize(context, raw_artifacts),
         )
     dataset_config = _required_dict(document, "dataset")
+    train_end = _datetime(dataset_config["train_end"])
+    validation_end = _datetime(dataset_config["validation_end"])
     dataset = executor.execute(
         "dataset",
         lambda: DuckDBDatasetBuilder(
             DatasetConfig(
-                train_end=_datetime(dataset_config["train_end"]),
-                validation_end=_datetime(dataset_config["validation_end"]),
+                train_end=train_end,
+                validation_end=validation_end,
                 minimum_repositories_per_subject=int(
                     dataset_config.get("minimum_repositories_per_subject", 2)
                 ),
@@ -103,6 +105,7 @@ def run_pipeline(config_path: Path) -> Artifact:
     )
 
     training_config = _required_dict(document, "training")
+    reference_time = _training_reference_time(training_config, train_end)
     top_k = int(training_config.get("top_k", 100))
     models: list[Artifact] = []
     models.extend(
@@ -118,16 +121,26 @@ def run_pipeline(config_path: Path) -> Artifact:
             ).train(context, dataset),
         )
     )
-    costar_config = _costar_config(training_config, "costar", top_k)
+    costar_config = _costar_config(training_config, "costar", top_k, reference_time)
     models.extend(
         executor.execute(
             "train:costar", lambda: CoStarTrainer(costar_config).train(context, dataset)
         )
     )
     if bool(training_config.get("run_ablations", True)):
-        no_decay = _costar_config(training_config, "costar_no_decay", top_k, no_decay=True)
+        no_decay = _costar_config(
+            training_config,
+            "costar_no_decay",
+            top_k,
+            reference_time,
+            no_decay=True,
+        )
         no_shrinkage = _costar_config(
-            training_config, "costar_no_shrinkage", top_k, no_shrinkage=True
+            training_config,
+            "costar_no_shrinkage",
+            top_k,
+            reference_time,
+            no_shrinkage=True,
         )
         models.extend(
             executor.execute(
@@ -236,12 +249,13 @@ def _costar_config(
     config: dict[str, Any],
     model_name: str,
     top_k: int,
+    reference_time: datetime,
     *,
     no_decay: bool = False,
     no_shrinkage: bool = False,
 ) -> CoStarConfig:
     return CoStarConfig(
-        reference_time=_datetime(config["reference_time"]),
+        reference_time=reference_time,
         half_life_days=1_000_000_000.0 if no_decay else float(config.get("half_life_days", 365)),
         legacy_time_weight=1.0 if no_decay else float(config.get("legacy_time_weight", 0.35)),
         shrinkage=0.0 if no_shrinkage else float(config.get("shrinkage", 10)),
@@ -250,6 +264,15 @@ def _costar_config(
         top_k=top_k,
         model_name=model_name,
     )
+
+
+def _training_reference_time(config: dict[str, Any], train_end: datetime) -> datetime:
+    """保证时间衰减只以训练截止点为基准，避免配置引入未来信息。"""
+
+    reference_time = _datetime(_required_string(config, "reference_time"))
+    if reference_time != train_end:
+        raise ValueError("training.reference_time 必须等于 dataset.train_end")
+    return reference_time
 
 
 def _load_config(path: Path) -> tuple[dict[str, Any], str]:
