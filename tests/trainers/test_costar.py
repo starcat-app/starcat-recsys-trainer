@@ -14,7 +14,7 @@ from starcat_recsys.trainers.costar import CoStarConfig, CoStarTrainer
 
 def test_costar_ranks_stronger_shared_support_first(tmp_path: Path) -> None:
     path = tmp_path / "dataset.parquet"
-    rows = []
+    rows: list[dict[str, object]] = []
     for subject, repo_ids in {
         "u1": [1, 2],
         "u2": [1, 2],
@@ -72,6 +72,7 @@ def _row(
         "source_subject_id": subject,
         "repo_id": repo_id,
         "sample_weight": 1.0,
+        "training_eligible": True,
         "split": "train",
         "occurred_at": occurred_at,
         "observed_at": datetime(2025, 1, 1, tzinfo=UTC),

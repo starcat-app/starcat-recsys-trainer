@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -55,11 +56,84 @@ def test_builds_latest_public_deduplicated_time_split_dataset(tmp_path: Path) ->
     assert {row["repo_id"] for row in dataset} == {1, 2, 4}
     assert {row["split"] for row in dataset} == {"train", "validation", "test"}
     assert all(row["sample_weight"] > 0 for row in dataset)
+    assert {row["training_eligible"] for row in dataset if row["source"] == "starcat_snapshot"} == {
+        True
+    }
+    assert {row["training_eligible"] for row in dataset if row["source"] == "gh_archive"} == {False}
     report = json.loads((tmp_path / "workspace/dataset/quality-report.json").read_text())
     assert report["input_interaction_rows"] == 9
     assert report["latest_snapshot_rows"] == 7
     assert report["deduplicated_rows"] == 6
     assert report["public_repository_rows"] == 5
+    assert report["unique_subject_repository_rows"] == 5
+    assert report["training_eligible_subject_count"] == 1
+
+
+def test_train_weight_is_invariant_to_future_interactions(tmp_path: Path) -> None:
+    base = [
+        _interaction("gh:1", "gh", 1, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("gh:2", "gh", 2, "2025-01-02", "star_event", "2025-01-02"),
+    ]
+    with_future = [
+        *base,
+        _interaction("gh:3", "gh", 3, "2025-07-01", "star_event", "2025-07-01"),
+        _interaction("gh:4", "gh", 4, "2026-01-01", "star_event", "2026-01-01"),
+    ]
+
+    base_dataset = _build_dataset(tmp_path / "base", base)
+    future_dataset = _build_dataset(tmp_path / "future", with_future)
+
+    base_weight = next(row["sample_weight"] for row in base_dataset if row["repo_id"] == 1)
+    future_weight = next(row["sample_weight"] for row in future_dataset if row["repo_id"] == 1)
+    assert base_weight == future_weight == 0.5
+
+
+def test_collapses_repeated_subject_repo_to_first_star_event(tmp_path: Path) -> None:
+    dataset = _build_dataset(
+        tmp_path,
+        [
+            _interaction("gh:later", "gh", 1, "2025-03-01", "star_event", "2025-03-01"),
+            _interaction("gh:first", "gh", 1, "2025-01-01", "star_event", "2025-01-01"),
+            _interaction("gh:other", "gh", 2, "2025-02-01", "star_event", "2025-02-01"),
+        ],
+    )
+
+    repo_one = [row for row in dataset if row["repo_id"] == 1]
+    assert len(repo_one) == 1
+    assert repo_one[0]["source_record_id"] == "gh:first"
+    assert repo_one[0]["occurred_at"] == _time("2025-01-01")
+
+
+def _build_dataset(tmp_path: Path, rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    interactions_path = tmp_path / "interactions.parquet"
+    repositories_path = tmp_path / "repositories.parquet"
+    pq.write_table(pa.Table.from_pylist(rows, schema=INTERACTION_SCHEMA), interactions_path)
+    repo_ids = sorted({int(str(row["repo_id"])) for row in rows})
+    pq.write_table(
+        pa.Table.from_pylist(
+            [_repository(repo_id) for repo_id in repo_ids], schema=REPOSITORY_SCHEMA
+        ),
+        repositories_path,
+    )
+    artifacts = DuckDBDatasetBuilder(
+        DatasetConfig(
+            train_end=datetime(2025, 4, 1, tzinfo=UTC),
+            validation_end=datetime(2025, 8, 1, tzinfo=UTC),
+        )
+    ).build(
+        TaskContext("run", tmp_path / "workspace", "sha256:test", 7),
+        [
+            artifact_for(interactions_path, "canonical_interactions", {}),
+            artifact_for(repositories_path, "canonical_repositories", {}),
+        ],
+    )
+    dataset_path = Path(
+        next(item for item in artifacts if item.kind == "training_dataset").uri.removeprefix(
+            "file://"
+        )
+    )
+    return cast(list[dict[str, object]], pq.read_table(dataset_path).to_pylist())
 
 
 def _interaction(

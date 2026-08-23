@@ -168,12 +168,43 @@ class DuckDBDatasetBuilder:
             """
         )
         connection.execute(
+            """
+            CREATE TEMP TABLE unique_subject_repositories AS
+            SELECT * EXCLUDE (subject_repo_rank)
+            FROM (
+                SELECT *, row_number() OVER (
+                    PARTITION BY source, source_subject_id, repo_id
+                    ORDER BY
+                        CASE WHEN relation_type = 'star_event' THEN occurred_at END ASC NULLS LAST,
+                        observed_at DESC,
+                        source_record_id
+                ) AS subject_repo_rank
+                FROM valid_interactions
+            )
+            WHERE subject_repo_rank = 1
+            """
+        )
+        connection.execute(
+            f"""
+            CREATE TEMP TABLE subject_statistics AS
+            SELECT
+                source,
+                source_subject_id,
+                count(DISTINCT repo_id) AS total_repo_count,
+                count(DISTINCT repo_id) FILTER (
+                    WHERE occurred_at IS NULL
+                       OR occurred_at < TIMESTAMPTZ '{train_end}'
+                ) AS train_repo_count
+            FROM unique_subject_repositories
+            GROUP BY source, source_subject_id
+            """
+        )
+        connection.execute(
             f"""
             CREATE TEMP TABLE eligible_subjects AS
-            SELECT source_subject_id, count(DISTINCT repo_id) AS repo_count
-            FROM valid_interactions
-            GROUP BY source_subject_id
-            HAVING count(DISTINCT repo_id) >= {minimum}
+            SELECT *
+            FROM subject_statistics
+            WHERE total_repo_count >= {minimum}
             """
         )
         connection.execute(
@@ -181,15 +212,16 @@ class DuckDBDatasetBuilder:
             CREATE TEMP TABLE final_dataset AS
             SELECT
                 i.*,
-                CAST(i.source_weight / log2(2 + s.repo_count) AS FLOAT) AS sample_weight,
+                CAST(i.source_weight / log2(2 + s.train_repo_count) AS FLOAT) AS sample_weight,
+                s.train_repo_count >= {minimum} AS training_eligible,
                 CASE
                     WHEN i.occurred_at IS NULL THEN 'train'
                     WHEN i.occurred_at < TIMESTAMPTZ '{train_end}' THEN 'train'
                     WHEN i.occurred_at < TIMESTAMPTZ '{validation_end}' THEN 'validation'
                     ELSE 'test'
                 END AS split
-            FROM valid_interactions i
-            INNER JOIN eligible_subjects s USING (source_subject_id)
+            FROM unique_subject_repositories i
+            INNER JOIN eligible_subjects s USING (source, source_subject_id)
             """
         )
 
@@ -199,11 +231,17 @@ class DuckDBDatasetBuilder:
             "latest_snapshot_rows": "current_interactions",
             "deduplicated_rows": "deduplicated_interactions",
             "public_repository_rows": "valid_interactions",
+            "unique_subject_repository_rows": "unique_subject_repositories",
             "final_rows": "final_dataset",
         }
         report: dict[str, Any] = {key: _count(connection, table) for key, table in tables.items()}
         report["public_repository_count"] = _count(connection, "valid_repositories")
         report["eligible_subject_count"] = _count(connection, "eligible_subjects")
+        report["training_eligible_subject_count"] = _count(
+            connection,
+            "subject_statistics",
+            f"train_repo_count >= {self._config.minimum_repositories_per_subject}",
+        )
         report["missing_occurred_at_rows"] = _count(
             connection, "final_dataset", "occurred_at IS NULL"
         )

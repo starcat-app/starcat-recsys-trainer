@@ -53,7 +53,7 @@ class SVDTrainer:
                 """
                 SELECT source_subject_id, repo_id, sum(sample_weight) AS weight
                 FROM dataset
-                WHERE split = 'train'
+                WHERE split = 'train' AND training_eligible
                 GROUP BY source_subject_id, repo_id
                 ORDER BY source_subject_id, repo_id
                 """

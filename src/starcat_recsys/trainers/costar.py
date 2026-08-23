@@ -122,7 +122,7 @@ class CoStarTrainer:
                     ORDER BY COALESCE(occurred_at, observed_at) DESC
                 ) AS duplicate_rank
             FROM dataset
-            WHERE split = 'train'
+            WHERE split = 'train' AND training_eligible
         ),
         unique_items AS (
             SELECT * EXCLUDE (duplicate_rank)

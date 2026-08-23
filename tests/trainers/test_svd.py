@@ -13,7 +13,7 @@ from starcat_recsys.trainers.svd import SVDConfig, SVDTrainer
 
 def test_svd_finds_repositories_with_shared_subjects(tmp_path: Path) -> None:
     path = tmp_path / "dataset.parquet"
-    rows = []
+    rows: list[dict[str, object]] = []
     for subject, repo_ids in {
         "u1": [1, 2],
         "u2": [1, 2],
@@ -25,6 +25,7 @@ def test_svd_finds_repositories_with_shared_subjects(tmp_path: Path) -> None:
                 "source_subject_id": subject,
                 "repo_id": repo_id,
                 "sample_weight": 1.0,
+                "training_eligible": True,
                 "split": "train",
             }
             for repo_id in repo_ids
@@ -53,6 +54,7 @@ def test_svd_rejects_homogeneous_matrix_without_runtime_warning(tmp_path: Path) 
                     "source_subject_id": subject,
                     "repo_id": repo_id,
                     "sample_weight": 1.0,
+                    "training_eligible": True,
                     "split": "train",
                 }
                 for subject in ["u1", "u2"]

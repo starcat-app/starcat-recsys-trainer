@@ -46,11 +46,13 @@ class PopularTrainer:
                 WITH popularity AS (
                     SELECT repo_id, sum(sample_weight) AS score
                     FROM dataset
-                    WHERE split = 'train'
+                    WHERE split = 'train' AND training_eligible
                     GROUP BY repo_id
                 ),
                 seeds AS (
-                    SELECT DISTINCT repo_id FROM dataset
+                    SELECT DISTINCT repo_id
+                    FROM dataset
+                    WHERE split = 'train' AND training_eligible
                 ),
                 candidates AS (
                     SELECT

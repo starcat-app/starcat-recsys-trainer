@@ -15,7 +15,7 @@ from starcat_recsys.pipeline import _repository_ids_from_canonical, run_pipeline
 
 def test_runs_end_to_end_pipeline_and_cli_query(tmp_path: Path, capsys: object) -> None:
     interactions = tmp_path / "interactions.jsonl"
-    rows = []
+    rows: list[dict[str, object]] = []
     subject_rows = {
         "u1": [
             (1, "2025-01-01T00:00:00Z"),
@@ -27,7 +27,11 @@ def test_runs_end_to_end_pipeline_and_cli_query(tmp_path: Path, capsys: object) 
             (2, "2025-02-01T00:00:00Z"),
             (3, "2025-09-01T00:00:00Z"),
         ],
-        "u3": [(1, "2025-01-01T00:00:00Z"), (3, "2025-09-01T00:00:00Z")],
+        "u3": [
+            (1, "2025-01-01T00:00:00Z"),
+            (4, "2025-03-01T00:00:00Z"),
+            (3, "2025-09-01T00:00:00Z"),
+        ],
     }
     for subject, subject_interactions in subject_rows.items():
         rows.extend(
@@ -50,7 +54,7 @@ def test_runs_end_to_end_pipeline_and_cli_query(tmp_path: Path, capsys: object) 
                 }
             )
             + "\n"
-            for repo_id in [1, 2, 3]
+            for repo_id in [1, 2, 3, 4]
         )
     )
     config = {
