@@ -14,3 +14,4 @@ All notable changes to Starcat Recommendation Pipeline are documented here.
 - 新增时间衰减 co-star 核心训练器，包含主体权重、半衰期、cosine 归一化、shrinkage 和 pair 上限。
 - 新增 Recall、NDCG、MRR 和 Coverage 时间留出评估，支持多模型与 co-star ablation 变体对比。
 - 新增不可变本地 Model Registry 和可校验 SQLite ServingBundle，发布前执行指标门禁。
+- 新增 YAML 端到端单机管道、任务执行记录、Bundle 校验/查询和 Registry 激活 CLI。
