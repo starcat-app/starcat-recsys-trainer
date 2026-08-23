@@ -6,7 +6,7 @@
 
 ## 已实现能力
 
-- GH Archive BigQuery `WatchEvent` 按日采集，dry run 和 `maximum_bytes_billed` 双重预算门禁。
+- GH Archive BigQuery `WatchEvent` 使用显式 UTC 日表采集，dry run 和 `maximum_bytes_billed` 双重预算门禁。
 - GitHub Repository REST metadata 采集，支持 ETag cache、请求上限和限流识别。
 - Starcat schema v1 匿名完整 Star 快照校验、HMAC 脱敏和导入。
 - `InteractionRecord` / `RepositoryRecord` Canonical Parquet 与全链路 manifest。
