@@ -1,0 +1,43 @@
+run_id: example-collection-v1
+workspace: ../workspace/collection
+registry: ../workspace/registry
+random_seed: 42
+
+sources:
+  - type: starcat_collection_api
+    base_url: http://127.0.0.1:5011
+    admin_key_env: STARCAT_COLLECTION_ADMIN_KEY
+    timeout_seconds: 60
+    maximum_snapshots: 100000
+    maximum_repositories_per_snapshot: 100000
+    maximum_response_bytes: 536870912
+  - type: github_api
+    repo_ids_from_canonical: true
+    repository_limit: 5000
+    maximum_requests: 5000
+    cache_directory: ../workspace/cache/github
+
+dataset:
+  train_end: "2026-08-24T00:00:00Z"
+  validation_end: "2026-12-01T00:00:00Z"
+  minimum_repositories_per_subject: 2
+
+training:
+  reference_time: "2026-08-24T00:00:00Z"
+  top_k: 100
+  svd_components: 64
+  half_life_days: 365
+  legacy_time_weight: 0.35
+  shrinkage: 10
+  minimum_support: 0
+  maximum_repositories_per_subject: 2000
+  run_ablations: true
+
+evaluation:
+  split: validation
+  k: 20
+
+publish:
+  model_version: example-collection-v1
+  selected_model: costar
+  metric_gates: {}

@@ -9,6 +9,7 @@
 - GH Archive BigQuery `WatchEvent` 使用显式 UTC 日表采集，dry run 和 `maximum_bytes_billed` 双重预算门禁。
 - GitHub Repository REST metadata 采集，支持 ETag cache、请求上限和限流识别。
 - Starcat schema v1 匿名完整 Star 快照校验、HMAC 脱敏和导入。
+- `starcat-collection-api` Admin 导出 Pull，校验响应 checksum、字节上限、schema 和 active 快照唯一性。
 - `InteractionRecord` / `RepositoryRecord` Canonical Parquet 与全链路 manifest。
 - 最新完整快照选择、同源去重、公开仓库过滤、主体权重和时间切分。
 - train-only 主体权重、subject-repo 唯一隐式反馈和 validation/test 未来数据隔离。
@@ -59,7 +60,7 @@ SourceConnector
 ## 安全边界
 
 - 不导入 Private/Internal repo、login、email、Starcat 标签、笔记、搜索和 AI/RAG 内容。
-- Starcat `participant_id` 在 raw landing 读取后立即 HMAC 转换，后续产物不保留原值。
+- 本地 Starcat 文件源在 raw landing 读取后立即 HMAC 转换 `participant_id`；Collection 源只接收服务端已 HMAC 的 `subject_id`，后续产物都不保留原值。
 - GH Archive 和 Starcat 的主体标识不跨来源连接。
 - Token、GCP 凭据和 HMAC key 只通过环境提供，不写入配置或 artifact。
 - 在线查询只读 ServingBundle，不读取 raw、canonical 或 dataset。

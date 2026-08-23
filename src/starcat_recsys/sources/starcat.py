@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from starcat_recsys.artifacts import artifact_for, write_json_atomic
+from starcat_recsys.artifacts import artifact_for, write_json_atomic, write_jsonl_atomic
 from starcat_recsys.domain import parse_datetime
 from starcat_recsys.interfaces import Artifact, TaskContext
 
@@ -68,7 +68,7 @@ class StarcatSnapshotSource:
         output_directory = context.workspace / "raw" / "starcat_snapshot"
         output_directory.mkdir(parents=True, exist_ok=True)
         output_path = output_directory / "snapshots.jsonl"
-        _write_jsonl_atomic(output_path, rows)
+        write_jsonl_atomic(output_path, rows)
         artifact = artifact_for(
             output_path,
             "raw_interactions",
@@ -169,11 +169,3 @@ def _load_hmac_key(environment_name: str) -> bytes:
     if not value:
         raise RuntimeError(f"环境变量 {environment_name} 未配置")
     return value.encode()
-
-
-def _write_jsonl_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    with temporary.open("w", encoding="utf-8") as output:
-        for row in rows:
-            output.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
-    temporary.replace(path)

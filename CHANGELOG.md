@@ -4,6 +4,7 @@ All notable changes to Starcat Recommendation Pipeline are documented here.
 
 ## Unreleased
 
+- 新增 `starcat_collection_api` Pull Connector，校验 Admin 导出 checksum、schema、数量上限与 active 主体唯一性，并复用现有 Starcat canonical 训练链路。
 - 新增 GH Archive BigQuery `WatchEvent` 按日采集，在查询前执行 dry run 并限制每日最大扫描字节数。
 - 新增 GitHub Repository metadata 采集，支持 ETag 缓存、请求数上限和限流信息识别。
 - 新增 Starcat schema v1 完整快照导入，校验 canonical hash 并在落地前脱敏 participant ID。

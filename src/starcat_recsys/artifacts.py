@@ -39,6 +39,23 @@ def write_json_atomic(path: Path, payload: Any, *, mode: int = 0o644) -> None:
         raise
 
 
+def write_jsonl_atomic(path: Path, rows: list[dict[str, Any]], *, mode: int = 0o644) -> None:
+    """原子写入 JSON Lines，确保采集中断时不会把半份 raw artifact 交给下游。"""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+        temporary.chmod(mode)
+        temporary.replace(path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
 def artifact_for(path: Path, kind: str, metadata: dict[str, Any]) -> Artifact:
     """为已落盘文件生成带 checksum 的 artifact 描述。"""
 

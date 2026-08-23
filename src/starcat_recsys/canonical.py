@@ -71,7 +71,7 @@ class CanonicalNormalizer:
             source = artifact.metadata.get("source")
             if source == "gh_archive":
                 interactions.extend(_normalize_gh_archive(_artifact_path(artifact)))
-            elif source == "starcat_snapshot":
+            elif source in {"starcat_snapshot", "starcat_collection_api"}:
                 interactions.extend(_normalize_starcat_snapshot(_artifact_path(artifact)))
             elif source == "github_api":
                 repositories.extend(_normalize_github_metadata(_artifact_path(artifact)))

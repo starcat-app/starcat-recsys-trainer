@@ -40,6 +40,20 @@ def test_normalizes_all_sources_without_cross_source_identity_join(tmp_path: Pat
         )
         + "\n"
     )
+    collection_path = raw / "collection.jsonl"
+    collection_path.write_text(
+        json.dumps(
+            {
+                "source_record_id": "collection-snapshot:3",
+                "source_subject_id": "collection-subject",
+                "repo_id": 3,
+                "starred_at": "2025-01-01T00:00:00+00:00",
+                "captured_at": "2026-01-02T00:00:00+00:00",
+                "snapshot_id": "collection-snapshot",
+            }
+        )
+        + "\n"
+    )
     github_path = raw / "github.jsonl"
     github_path.write_text(
         json.dumps(
@@ -66,6 +80,7 @@ def test_normalizes_all_sources_without_cross_source_identity_join(tmp_path: Pat
     inputs = [
         artifact_for(gh_path, "raw_interactions", {"source": "gh_archive"}),
         artifact_for(starcat_path, "raw_interactions", {"source": "starcat_snapshot"}),
+        artifact_for(collection_path, "raw_interactions", {"source": "starcat_collection_api"}),
         artifact_for(github_path, "raw_repositories", {"source": "github_api"}),
     ]
 
@@ -75,7 +90,7 @@ def test_normalizes_all_sources_without_cross_source_identity_join(tmp_path: Pat
 
     interaction_artifact = next(item for item in artifacts if item.kind == "canonical_interactions")
     interactions = pq.read_table(Path(interaction_artifact.uri.removeprefix("file://"))).to_pylist()
-    assert len(interactions) == 2
+    assert len(interactions) == 3
     assert interactions[0]["source_subject_id"] != interactions[1]["source_subject_id"]
     assert {row["relation_type"] for row in interactions} == {
         "star_event",

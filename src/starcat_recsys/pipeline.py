@@ -31,6 +31,10 @@ from starcat_recsys.sources.github import (
 )
 from starcat_recsys.sources.local import LocalFileSource
 from starcat_recsys.sources.starcat import StarcatSnapshotConfig, StarcatSnapshotSource
+from starcat_recsys.sources.starcat_collection import (
+    StarcatCollectionAPISource,
+    StarcatCollectionConfig,
+)
 from starcat_recsys.trainers.costar import CoStarConfig, CoStarTrainer
 from starcat_recsys.trainers.popular import PopularConfig, PopularTrainer
 from starcat_recsys.trainers.svd import SVDConfig, SVDTrainer
@@ -214,6 +218,19 @@ def _source_connector(
                     config.get("maximum_repositories_per_snapshot", 100_000)
                 ),
             ),
+        )
+    if source_type == "starcat_collection_api":
+        return StarcatCollectionAPISource(
+            StarcatCollectionConfig(
+                base_url=_required_string(config, "base_url"),
+                admin_key_env=str(config.get("admin_key_env", "STARCAT_COLLECTION_ADMIN_KEY")),
+                timeout_seconds=float(config.get("timeout_seconds", 60)),
+                maximum_snapshots=int(config.get("maximum_snapshots", 100_000)),
+                maximum_repositories_per_snapshot=int(
+                    config.get("maximum_repositories_per_snapshot", 100_000)
+                ),
+                maximum_response_bytes=int(config.get("maximum_response_bytes", 512 * 1024 * 1024)),
+            )
         )
     if source_type == "github_api":
         return GitHubRepositoryMetadataSource(
