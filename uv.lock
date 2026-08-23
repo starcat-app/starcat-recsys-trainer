@@ -1299,6 +1299,7 @@ dependencies = [
     { name = "pyarrow" },
     { name = "pyyaml" },
     { name = "scikit-learn" },
+    { name = "scipy" },
 ]
 
 [package.dev-dependencies]
@@ -1318,6 +1319,7 @@ requires-dist = [
     { name = "pyarrow", specifier = ">=19,<23" },
     { name = "pyyaml", specifier = ">=6.0,<7" },
     { name = "scikit-learn", specifier = ">=1.6,<2" },
+    { name = "scipy", specifier = ">=1.15,<2" },
 ]
 
 [package.metadata.requires-dev]

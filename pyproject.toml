@@ -17,6 +17,7 @@ dependencies = [
   "numpy>=2.1,<3",
   "pyarrow>=19,<23",
   "pyyaml>=6.0,<7",
+  "scipy>=1.15,<2",
   "scikit-learn>=1.6,<2",
 ]
 
@@ -53,6 +54,10 @@ packages = ["starcat_recsys"]
 
 [[tool.mypy.overrides]]
 module = ["pyarrow", "pyarrow.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["scipy", "scipy.*", "sklearn", "sklearn.*"]
 ignore_missing_imports = true
 
 [tool.coverage.run]
