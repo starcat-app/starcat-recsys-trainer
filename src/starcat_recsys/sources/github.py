@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -144,11 +145,15 @@ class GitHubRepositoryMetadataSource:
                     )
                 if int(response.payload.get("id", 0)) != repo_id:
                     raise RuntimeError(f"GitHub API 返回的 repo ID 与请求不一致：{repo_id}")
-                rows.append(response.payload)
+                envelope = {
+                    "fetched_at": datetime.now(UTC).isoformat(),
+                    "repository": response.payload,
+                }
+                rows.append(envelope)
                 _write_cache(
                     cache_directory,
                     repo_id,
-                    response.payload,
+                    envelope,
                     response.headers.get("etag"),
                 )
         finally:

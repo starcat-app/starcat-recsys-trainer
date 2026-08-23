@@ -7,3 +7,4 @@ All notable changes to Starcat Recommendation Pipeline are documented here.
 - 新增 GH Archive BigQuery `WatchEvent` 按日采集，在查询前执行 dry run 并限制每日最大扫描字节数。
 - 新增 GitHub Repository metadata 采集，支持 ETag 缓存、请求数上限和限流信息识别。
 - 新增 Starcat schema v1 完整快照导入，校验 canonical hash 并在落地前脱敏 participant ID。
+- 新增统一 `InteractionRecord` 和 `RepositoryRecord` Parquet schema，保留行为来源语义与 lineage manifest。

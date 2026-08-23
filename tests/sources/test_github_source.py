@@ -51,7 +51,8 @@ def test_collect_writes_sorted_unique_jsonl_and_skips_404(tmp_path: Path) -> Non
     artifacts = source.collect(context)
 
     rows = [json.loads(line) for line in _artifact_path(artifacts[0]).read_text().splitlines()]
-    assert rows == [{"full_name": "owner/repo-1", "id": 1}]
+    assert rows[0]["repository"] == {"full_name": "owner/repo-1", "id": 1}
+    assert rows[0]["fetched_at"]
     assert gateway.calls == [(1, None), (2, None)]
     assert gateway.closed
     manifest = json.loads((context.workspace / "raw/github_metadata/manifest.json").read_text())
