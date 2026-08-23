@@ -23,7 +23,12 @@ from starcat_recsys.canonical import CanonicalNormalizer
 from starcat_recsys.dataset import DatasetConfig, DuckDBDatasetBuilder
 from starcat_recsys.evaluation import EvaluationConfig, OfflineEvaluator
 from starcat_recsys.executor import LocalExecutor
-from starcat_recsys.interfaces import Artifact, SourceConnector, TaskContext
+from starcat_recsys.interfaces import (
+    Artifact,
+    InsufficientTrainingDataError,
+    SourceConnector,
+    TaskContext,
+)
 from starcat_recsys.publishers import RecommendAPIBundlePublisher, RecommendAPIPublishConfig
 from starcat_recsys.sources.bigquery import BigQueryConfig, BigQueryWatchEventSource
 from starcat_recsys.sources.github import (
@@ -118,14 +123,15 @@ def run_pipeline(config_path: Path) -> Artifact:
             "train:popular", lambda: PopularTrainer(PopularConfig(top_k)).train(context, dataset)
         )
     )
-    models.extend(
-        executor.execute(
-            "train:svd",
-            lambda: SVDTrainer(
-                SVDConfig(int(training_config.get("svd_components", 64)), top_k)
-            ).train(context, dataset),
-        )
+    svd_models = executor.execute_optional(
+        "train:svd",
+        lambda: SVDTrainer(SVDConfig(int(training_config.get("svd_components", 64)), top_k)).train(
+            context, dataset
+        ),
+        skip_on=InsufficientTrainingDataError,
     )
+    if svd_models is not None:
+        models.extend(svd_models)
     costar_config = _costar_config(training_config, "costar", top_k, reference_time)
     models.extend(
         executor.execute(

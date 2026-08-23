@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 
+class InsufficientTrainingDataError(ValueError):
+    """候选模型因样本数学条件不足而无法训练，但不代表整条管道失败。"""
+
+
 @dataclass(frozen=True, slots=True)
 class Artifact:
     """一个可校验、可追踪的管道产物。"""

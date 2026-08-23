@@ -14,6 +14,7 @@
 - 最新完整快照选择、同源去重、公开仓库过滤、主体权重和时间切分。
 - train-only 主体权重、subject-repo 唯一隐式反馈和 validation/test 未来数据隔离。
 - Popular、TruncatedSVD、时间衰减 co-star 和两个 ablation 变体。
+- 单主体冷启动时明确跳过不满足数学条件的 SVD，继续交付可用的 Popular/co-star。
 - Recall@K、NDCG@K、MRR@K、Coverage 离线评估和指标发布门禁。
 - 不可变本地 Model Registry、SQLite ServingBundle、checksum/quick-check 校验和查询 CLI。
 - `RecommendAPIBundlePublisher` 使用独立发布密钥上传、激活 Bundle，并生成不含凭据的交付回执。

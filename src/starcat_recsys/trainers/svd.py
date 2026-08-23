@@ -14,7 +14,7 @@ from scipy.sparse import csr_matrix
 from sklearn.decomposition import TruncatedSVD
 from sklearn.neighbors import NearestNeighbors
 
-from starcat_recsys.interfaces import Artifact, TaskContext
+from starcat_recsys.interfaces import Artifact, InsufficientTrainingDataError, TaskContext
 from starcat_recsys.recommendations import (
     artifact_path,
     training_dataset,
@@ -64,7 +64,7 @@ class SVDTrainer:
         subjects = sorted({str(row[0]) for row in values})
         repo_ids = sorted({int(row[1]) for row in values})
         if len(subjects) < 2 or len(repo_ids) < 2:
-            raise ValueError("SVD 至少需要 2 个主体和 2 个仓库")
+            raise InsufficientTrainingDataError("SVD 至少需要 2 个主体和 2 个仓库")
         subject_index = {value: index for index, value in enumerate(subjects)}
         repo_index = {value: index for index, value in enumerate(repo_ids)}
         matrix = csr_matrix(
@@ -81,7 +81,7 @@ class SVDTrainer:
         column_mean = np.asarray(matrix.mean(axis=0)).ravel()
         column_square_mean = np.asarray(matrix.power(2).mean(axis=0)).ravel()
         if float(np.sum(column_square_mean - np.square(column_mean))) <= 1e-12:
-            raise ValueError("SVD 训练矩阵没有可分解的列方差")
+            raise InsufficientTrainingDataError("SVD 训练矩阵没有可分解的列方差")
         component_count = min(self._config.components, min(matrix.shape) - 1)
         svd = TruncatedSVD(n_components=component_count, random_state=context.random_seed)
         svd.fit(matrix)
