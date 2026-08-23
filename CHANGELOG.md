@@ -21,3 +21,4 @@ All notable changes to Starcat Recommendation Pipeline are documented here.
 - 第三轮审查将 warning 纳入默认门禁，补齐 GitHub HTTP Adapter 测试，完成构建和进度收口。
 - 修复 GH Archive 通配符匹配 `yesterday` View 和空预算序列化问题，并完成 ADC、真实查询与 Arrow 转换验证。
 - 第四轮审查完成 BigQuery 生产链路、测试、文档和工程进度收口。
+- 第五轮审查修复训练权重、重复隐式反馈、Popular seed、Coverage 和时间衰减基准的未来数据污染。

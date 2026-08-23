@@ -11,6 +11,7 @@
 - Starcat schema v1 匿名完整 Star 快照校验、HMAC 脱敏和导入。
 - `InteractionRecord` / `RepositoryRecord` Canonical Parquet 与全链路 manifest。
 - 最新完整快照选择、同源去重、公开仓库过滤、主体权重和时间切分。
+- train-only 主体权重、subject-repo 唯一隐式反馈和 validation/test 未来数据隔离。
 - Popular、TruncatedSVD、时间衰减 co-star 和两个 ablation 变体。
 - Recall@K、NDCG@K、MRR@K、Coverage 离线评估和指标发布门禁。
 - 不可变本地 Model Registry、SQLite ServingBundle、checksum/quick-check 校验和查询 CLI。
