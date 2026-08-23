@@ -68,6 +68,7 @@ SourceConnector
 ## 文档
 
 - [完整使用说明](docs/使用说明.md)
+- [Collection 本机 E2E 配置](configs/example-collection-local.yaml)
 - [架构设计](docs/架构设计.md)
 - [实施清单](docs/实施清单.md)
 - [贡献指南](CONTRIBUTING.md)

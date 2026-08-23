@@ -1,0 +1,42 @@
+run_id: example-collection-local-v1
+workspace: ../workspace/collection-e2e
+registry: ../workspace/registry-e2e
+random_seed: 42
+
+sources:
+  - type: starcat_collection_api
+    base_url: http://127.0.0.1:5011
+    admin_key_env: STARCAT_COLLECTION_ADMIN_KEY
+    timeout_seconds: 60
+    maximum_snapshots: 100
+    maximum_repositories_per_snapshot: 1000
+    maximum_response_bytes: 10485760
+  - type: local_file
+    path: ../examples/data/github-repositories.jsonl
+    source: github_api
+    kind: raw_repositories
+
+dataset:
+  train_end: "2025-06-01T00:00:00Z"
+  validation_end: "2026-01-01T00:00:00Z"
+  minimum_repositories_per_subject: 2
+
+training:
+  reference_time: "2025-06-01T00:00:00Z"
+  top_k: 3
+  svd_components: 2
+  half_life_days: 365
+  legacy_time_weight: 0.35
+  shrinkage: 1
+  minimum_support: 0
+  maximum_repositories_per_subject: 100
+  run_ablations: true
+
+evaluation:
+  split: validation
+  k: 3
+
+publish:
+  model_version: example-collection-local-v1
+  selected_model: costar
+  metric_gates: {}
