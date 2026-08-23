@@ -7,7 +7,7 @@ Connector 按 UTC 日逐分区执行查询。每个分区必须先 dry run，且
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Protocol
 
 import pyarrow as pa
@@ -17,15 +17,14 @@ from google.cloud import bigquery
 from starcat_recsys.artifacts import artifact_for, write_json_atomic
 from starcat_recsys.interfaces import Artifact, TaskContext
 
-GH_ARCHIVE_QUERY = """
+GH_ARCHIVE_QUERY_TEMPLATE = """
 SELECT
   CAST(id AS STRING) AS source_record_id,
   CAST(actor.id AS STRING) AS actor_id,
   CAST(repo.id AS INT64) AS repo_id,
   created_at
-FROM `githubarchive.day.*`
-WHERE _TABLE_SUFFIX = @table_suffix
-  AND type = 'WatchEvent'
+FROM `githubarchive.day.{table_suffix}`
+WHERE type = 'WatchEvent'
   AND actor.id IS NOT NULL
   AND repo.id IS NOT NULL
 """.strip()
@@ -66,35 +65,36 @@ class GoogleBigQueryGateway:
         self._client = bigquery.Client(project=config.billing_project, location=config.location)
 
     def estimate_bytes(self, table_suffix: str) -> int:
-        job_config = self._job_config(table_suffix, dry_run=True)
-        job = self._client.query(GH_ARCHIVE_QUERY, job_config=job_config)
+        query = _gh_archive_query(table_suffix)
+        job_config = self._job_config(dry_run=True)
+        job = self._client.query(query, job_config=job_config)
         return int(job.total_bytes_processed or 0)
 
     def fetch_watch_events(self, table_suffix: str, maximum_bytes_billed: int) -> pa.Table:
+        query = _gh_archive_query(table_suffix)
         job_config = self._job_config(
-            table_suffix,
             dry_run=False,
             maximum_bytes_billed=maximum_bytes_billed,
         )
-        result = self._client.query(GH_ARCHIVE_QUERY, job_config=job_config).result()
+        result = self._client.query(query, job_config=job_config).result()
         # 禁用 BigQuery Storage API，避免第一版额外要求该权限；查询已经按日和列裁剪。
         return result.to_arrow(create_bqstorage_client=False)
 
     def _job_config(
         self,
-        table_suffix: str,
         *,
         dry_run: bool,
         maximum_bytes_billed: int | None = None,
     ) -> bigquery.QueryJobConfig:
-        return bigquery.QueryJobConfig(
+        job_config = bigquery.QueryJobConfig(
             dry_run=dry_run,
             use_query_cache=False,
-            maximum_bytes_billed=maximum_bytes_billed,
-            query_parameters=[
-                bigquery.ScalarQueryParameter("table_suffix", "STRING", table_suffix)
-            ],
         )
+        # SDK 3.43 会把构造参数 None 序列化成字符串 "None"，BigQuery API 会以
+        # TYPE_INT64 错误拒绝任务；dry run 不需要该字段，因此只在有值时设置。
+        if maximum_bytes_billed is not None:
+            job_config.maximum_bytes_billed = maximum_bytes_billed
+        return job_config
 
 
 class BigQueryWatchEventSource:
@@ -164,3 +164,19 @@ class BigQueryWatchEventSource:
 def _date_range(start: date, end: date) -> list[date]:
     days = (end - start).days
     return [start + timedelta(days=offset) for offset in range(days + 1)]
+
+
+def _gh_archive_query(table_suffix: str) -> str:
+    """构造只指向一个 GH Archive 日表的查询。
+
+    `githubarchive.day` 同时包含 `yesterday` View，不能使用 `day.*` 通配符。
+    表名又不支持 BigQuery 参数绑定，因此必须先完成严格日期校验，再插入 SQL。
+    """
+
+    if len(table_suffix) != 8 or not table_suffix.isascii() or not table_suffix.isdigit():
+        raise ValueError("GH Archive 表后缀必须是有效的 YYYYMMDD 日期")
+    try:
+        datetime.strptime(table_suffix, "%Y%m%d")
+    except ValueError as error:
+        raise ValueError("GH Archive 表后缀必须是有效的 YYYYMMDD 日期") from error
+    return GH_ARCHIVE_QUERY_TEMPLATE.format(table_suffix=table_suffix)

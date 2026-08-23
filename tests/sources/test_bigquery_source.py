@@ -7,7 +7,12 @@ import pyarrow as pa
 import pytest
 
 from starcat_recsys.interfaces import TaskContext
-from starcat_recsys.sources.bigquery import BigQueryConfig, BigQueryWatchEventSource
+from starcat_recsys.sources.bigquery import (
+    BigQueryConfig,
+    BigQueryWatchEventSource,
+    GoogleBigQueryGateway,
+    _gh_archive_query,
+)
 
 
 class FakeGateway:
@@ -82,3 +87,36 @@ def test_rejects_reversed_date_range() -> None:
             end_date=date(2026, 8, 23),
             maximum_bytes_billed_per_day=1000,
         )
+
+
+def test_builds_query_for_one_explicit_day_table() -> None:
+    query = _gh_archive_query("20240101")
+
+    assert "`githubarchive.day.20240101`" in query
+    assert "githubarchive.day.*" not in query
+    assert "_TABLE_SUFFIX" not in query
+
+
+@pytest.mark.parametrize(
+    "table_suffix",
+    ["2024011", "20240132", "２０２４０１０１", "20240101` WHERE TRUE --"],
+)
+def test_rejects_invalid_or_unsafe_table_suffix(table_suffix: str) -> None:
+    with pytest.raises(ValueError, match="YYYYMMDD"):
+        _gh_archive_query(table_suffix)
+
+
+def test_dry_run_job_config_omits_empty_maximum_bytes() -> None:
+    gateway = object.__new__(GoogleBigQueryGateway)
+
+    job_config = gateway._job_config(dry_run=True)
+
+    assert "maximumBytesBilled" not in job_config.to_api_repr()["query"]
+
+
+def test_query_job_config_serializes_maximum_bytes() -> None:
+    gateway = object.__new__(GoogleBigQueryGateway)
+
+    job_config = gateway._job_config(dry_run=False, maximum_bytes_billed=200_000_000)
+
+    assert job_config.to_api_repr()["query"]["maximumBytesBilled"] == "200000000"
