@@ -1,101 +1,86 @@
 # Starcat 推荐数据与离线训练管道
 
-`starcat-recsys-trainer` 是 Starcat 自研仓库推荐系统的数据与离线训练管道。它负责从多种来源采集公开数据，将来源各异的数据转换为版本化的内部标准格式，完成数据质量检查、训练集构建、离线训练、评估和 ServingBundle 发布。
+`starcat-recsys-trainer` 负责从多种数据源采集公开仓库行为和 metadata，转换为统一 Parquet 格式，完成数据质量检查、离线训练、时间留出评估和 ServingBundle 发布。
 
-当前仓库为私有项目，尚未对外发布，也不提供生产 REST API。
+当前仓库为私有项目，不提供生产 REST API。未来 Starcat 和 `starcat-recsys-api` 通过只读 ServingBundle 接入，与训练数据和匿名主体隔离。
 
-## 当前能力
+## 已实现能力
 
-- 从 GH Archive BigQuery 采集公开 `WatchEvent`。
-- 从 GitHub REST API 补齐公开仓库 metadata。
-- 导入 Starcat 匿名公开 Star 全量快照。
-- 将所有来源转换为 `InteractionRecord` 和 `RepositoryRecord`。
-- 构建可复现、可追踪的数据集。
-- 训练 Popular、TruncatedSVD 和时间衰减 co-star 基线。
-- 输出离线评估、模型 manifest、数据质量报告和 ServingBundle。
-- 使用本地查询命令验证 ServingBundle。
-
-## 架构
-
-```text
-Push / Pull SourceConnector
-    -> Raw Zone
-    -> Normalizer
-    -> Canonical Parquet
-    -> Validator
-    -> DatasetBuilder
-    -> Trainer
-    -> Evaluator
-    -> Publisher
-    -> ServingBundle
-```
-
-训练管道不承担公网查询。未来独立的 `starcat-recsys-api` 只读已发布 ServingBundle，为 Starcat 和经授权的第三方客户端提供 REST API。
-
-详细设计见 [docs/架构设计.md](docs/架构设计.md)，完整使用方法见 [docs/使用说明.md](docs/使用说明.md)。
-
-## 环境要求
-
-- Python 3.12
-- macOS 或 Linux
-- 推荐使用 `uv`
-- BigQuery 数据源需要 Google Application Default Credentials
-- GitHub metadata 数据源建议设置 `GITHUB_TOKEN`
+- GH Archive BigQuery `WatchEvent` 按日采集，dry run 和 `maximum_bytes_billed` 双重预算门禁。
+- GitHub Repository REST metadata 采集，支持 ETag cache、请求上限和限流识别。
+- Starcat schema v1 匿名完整 Star 快照校验、HMAC 脱敏和导入。
+- `InteractionRecord` / `RepositoryRecord` Canonical Parquet 与全链路 manifest。
+- 最新完整快照选择、同源去重、公开仓库过滤、主体权重和时间切分。
+- Popular、TruncatedSVD、时间衰减 co-star 和两个 ablation 变体。
+- Recall@K、NDCG@K、MRR@K、Coverage 离线评估和指标发布门禁。
+- 不可变本地 Model Registry、SQLite ServingBundle、checksum/quick-check 校验和查询 CLI。
+- YAML 驱动的单机端到端管道，节点通过 artifact 接口可继续扩展数据源和训练器。
 
 ## 快速开始
 
 ```bash
 uv sync --all-groups
-uv run starcat-recsys --help
 make check
+make demo
 ```
 
-使用本地 fixture 运行完整示例：
-
-```bash
-uv run starcat-recsys pipeline run \
-  --config configs/example-local.yaml
-```
-
-查看产物：
+`make demo` 使用本地 fixture 完整执行一次管道，不访问 BigQuery 或 GitHub。查询已发布产物：
 
 ```bash
 uv run starcat-recsys bundle verify \
-  workspace/published/latest
+  workspace/registry/versions/example-local-v1
 
 uv run starcat-recsys bundle query \
-  workspace/published/latest \
-  --repo-id 41881900 \
+  workspace/registry/versions/example-local-v1 \
+  --repo-id 1 \
   --limit 10
 ```
 
-## 数据安全边界
+Registry 版本不可覆盖。重跑时同时修改 YAML 中的 `run_id` 和 `publish.model_version`。
 
-- 不上传或保存 GitHub Token、login、email、Private/Internal repo 和 Starcat 本地标签、笔记、搜索、AI/RAG 内容。
-- Starcat `participant_id` 在标准化阶段通过 HMAC 转换为来源内训练标识，标准数据集中不保留原值。
-- GH Archive、Starcat 和其他来源的用户标识不做跨来源连接。
-- 日志、指标和审查报告不得包含完整用户 Star 集合。
-- BigQuery 正式查询必须先 dry run，并受到 `maximum_bytes_billed` 限制。
+## 管道结构
 
-## 开发与验证
+```text
+SourceConnector
+  -> raw
+  -> CanonicalNormalizer
+  -> canonical Parquet
+  -> DuckDBDatasetBuilder
+  -> train / validation / test
+  -> Popular / SVD / co-star
+  -> OfflineEvaluator
+  -> ServingBundlePublisher
+  -> LocalModelRegistry
+```
+
+数据源、标准化、数据集、训练、评估和发布都通过稳定 Protocol 连接。当前 `LocalExecutor` 在单机编排；后续多机执行可替换 executor 和 artifact storage，不需要把 BigQuery、GitHub 或 Starcat DTO 带入训练器。
+
+## 安全边界
+
+- 不导入 Private/Internal repo、login、email、Starcat 标签、笔记、搜索和 AI/RAG 内容。
+- Starcat `participant_id` 在 raw landing 读取后立即 HMAC 转换，后续产物不保留原值。
+- GH Archive 和 Starcat 的主体标识不跨来源连接。
+- Token、GCP 凭据和 HMAC key 只通过环境提供，不写入配置或 artifact。
+- 在线查询只读 ServingBundle，不读取 raw、canonical 或 dataset。
+
+## 文档
+
+- [完整使用说明](docs/使用说明.md)
+- [架构设计](docs/架构设计.md)
+- [实施清单](docs/实施清单.md)
+- [贡献指南](CONTRIBUTING.md)
+- [安全说明](SECURITY.md)
+- [支持说明](SUPPORT.md)
+- [变更记录](CHANGELOG.md)
+
+## 开发验证
 
 ```bash
 make format
 make check
-make test
 ```
 
-项目当前不包含 GitHub Actions。所有质量门禁先在本地执行。
-
-## 文档
-
-- [架构设计](docs/架构设计.md)
-- [使用说明](docs/使用说明.md)
-- [实施清单](docs/实施清单.md)
-- [安全说明](SECURITY.md)
-- [贡献指南](CONTRIBUTING.md)
-- [支持说明](SUPPORT.md)
-- [变更记录](CHANGELOG.md)
+项目按要求不包含 CI workflow，所有质量门禁在本地执行。
 
 ## License
 

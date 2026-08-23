@@ -1,15 +1,12 @@
-# Support
+# 支持说明
 
-Use [GitHub Issues](https://github.com/starcat-app/starcat-recsys-trainer/issues) for reproducible bugs and focused feature requests about
-this repository.
+当前仓库为私有项目。有权限的协作者可以在本仓库 Issues 中提交可复现缺陷或范围明确的功能请求。
 
-Before opening an issue:
+提交前请：
 
-- Search existing issues.
-- Include the affected version or commit, environment, and reproduction steps.
-- Remove tokens, license keys, private data, customer data, and other secrets.
-- Keep one problem or request per issue.
+- 搜索已有 Issue。
+- 附上 commit / 模型版本、macOS 与 Python 版本、复现步骤、期望和实际结果。
+- 只提供最小脱敏 fixture，删除 token、原始快照、真实主体标识和其他私密数据。
+- 一个 Issue 只记录一个问题。
 
-For Starcat application and product support, use
-[starcat-pro Issues](https://github.com/starcat-app/starcat-pro/issues). Report vulnerabilities
-privately through this repository's Security tab as described in [SECURITY.md](./SECURITY.md).
+Starcat 应用本身的产品支持请使用 `starcat-pro` 仓库。安全问题按 [SECURITY.md](SECURITY.md) 使用 Security Advisory 私下报告。

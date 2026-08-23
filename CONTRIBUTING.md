@@ -1,20 +1,22 @@
-# Contributing
+# 贡献指南
 
-Thank you for contributing to Starcat Recommendation Pipeline.
+当前仓库为私有项目。获得访问权限的贡献者应先通过 Issue 对齐需求和数据安全边界，再提交代码。
 
-## Before opening a pull request
+## 本地开发
 
-- Discuss large behavior or architecture changes in an issue first.
-- Keep each pull request focused.
-- Add or update tests for behavior changes.
-- Run the real formatting, test, build, and package commands documented in `README.md`.
-- Update both `README.md` and `README-ZH.md` when public behavior changes.
-- Do not commit credentials, `.env` files, private data, generated binaries, or local databases.
+```bash
+uv sync --all-groups
+make check
+```
 
-## Pull requests
+修改训练或发布逻辑时，还应用新的 `run_id` 和 `model_version` 执行本地端到端示例。
 
-Complete the repository pull request template, explain the user-visible effect, and include the
-commands and results used for verification.
+## Pull Request
 
-Security vulnerabilities must be reported privately according to [SECURITY.md](./SECURITY.md),
-not through a public issue or pull request.
+- 一个 PR 只处理一类问题。
+- 行为变更必须增加或更新测试。
+- 同步更新 `README.md`、`docs/使用说明.md`、`docs/架构设计.md` 和 `CHANGELOG.md` 中与本次变更相关的内容。
+- PR 说明中列出执行过的验证命令和结果。
+- 不得提交 token、`.env`、GCP 凭据、HMAC key、原始用户快照、本地 workspace 或模型 Registry。
+
+安全漏洞按 [SECURITY.md](SECURITY.md) 私下报告，不要提交公开 Issue。

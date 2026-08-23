@@ -1,12 +1,15 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help sync format format-check lint typecheck test check
+.PHONY: help sync demo format format-check lint typecheck test check
 
 help: ## 显示可用命令
 	@awk 'BEGIN {FS = ":.*?## "}; /^[a-zA-Z_-]+:.*?## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 sync: ## 安装运行和开发依赖
 	uv sync --all-groups
+
+demo: ## 使用本地 fixture 运行完整管道（模型版本不可重复）
+	uv run starcat-recsys pipeline run --config configs/example-local.yaml
 
 format: ## 格式化代码
 	uv run ruff format .

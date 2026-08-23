@@ -10,6 +10,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import yaml
 
 from starcat_recsys.artifacts import write_json_atomic
@@ -49,9 +50,16 @@ def run_pipeline(config_path: Path) -> Artifact:
     executor = LocalExecutor()
 
     raw_artifacts: list[Artifact] = []
-    for index, source_config in enumerate(_required_list(document, "sources")):
+    source_configs = _required_list(document, "sources")
+    deferred_github_configs: list[dict[str, Any]] = []
+    for index, source_config in enumerate(source_configs):
         if not isinstance(source_config, dict):
             raise ValueError("sources[] 必须是对象")
+        if source_config.get("type") == "github_api" and bool(
+            source_config.get("repo_ids_from_canonical")
+        ):
+            deferred_github_configs.append(source_config)
+            continue
         connector = _source_connector(source_config, base_directory)
         raw_artifacts.extend(
             executor.execute(
@@ -62,6 +70,22 @@ def run_pipeline(config_path: Path) -> Artifact:
     canonical = executor.execute(
         "normalize", lambda: CanonicalNormalizer().normalize(context, raw_artifacts)
     )
+    for index, github_config in enumerate(deferred_github_configs):
+        repo_ids = _repository_ids_from_canonical(
+            canonical,
+            int(github_config.get("repository_limit", 5_000)),
+        )
+        connector = _source_connector(github_config, base_directory, repo_ids=repo_ids)
+        raw_artifacts.extend(
+            executor.execute(
+                f"collect:deferred-github:{index}", partial(connector.collect, context)
+            )
+        )
+    if deferred_github_configs:
+        canonical = executor.execute(
+            "normalize:with-github-metadata",
+            lambda: CanonicalNormalizer().normalize(context, raw_artifacts),
+        )
     dataset_config = _required_dict(document, "dataset")
     dataset = executor.execute(
         "dataset",
@@ -154,7 +178,9 @@ def run_pipeline(config_path: Path) -> Artifact:
     return bundle
 
 
-def _source_connector(config: dict[str, Any], base: Path) -> SourceConnector:
+def _source_connector(
+    config: dict[str, Any], base: Path, *, repo_ids: list[int] | None = None
+) -> SourceConnector:
     source_type = _required_string(config, "type")
     if source_type == "local_file":
         return LocalFileSource(
@@ -176,7 +202,9 @@ def _source_connector(config: dict[str, Any], base: Path) -> SourceConnector:
         )
     if source_type == "github_api":
         return GitHubRepositoryMetadataSource(
-            [int(value) for value in _required_list(config, "repo_ids")],
+            repo_ids
+            if repo_ids is not None
+            else [int(value) for value in _required_list(config, "repo_ids")],
             GitHubMetadataConfig(
                 token_env=str(config.get("token_env", "GITHUB_TOKEN")),
                 api_version=str(config.get("api_version", "2026-03-10")),
@@ -273,3 +301,27 @@ def _git_commit() -> str:
         text=True,
     )
     return result.stdout.strip() if result.returncode == 0 else "unknown"
+
+
+def _repository_ids_from_canonical(inputs: list[Artifact], limit: int) -> list[int]:
+    if limit <= 0:
+        raise ValueError("repository_limit 必须大于 0")
+    matches = [item for item in inputs if item.kind == "canonical_interactions"]
+    if len(matches) != 1:
+        raise ValueError("延迟 GitHub metadata 采集需要一个 canonical_interactions")
+    path = Path(matches[0].uri.removeprefix("file://"))
+    connection = duckdb.connect()
+    try:
+        rows = connection.execute(
+            """
+            SELECT repo_id
+            FROM read_parquet(?)
+            GROUP BY repo_id
+            ORDER BY count(*) DESC, repo_id
+            LIMIT ?
+            """,
+            [path.as_posix(), limit],
+        ).fetchall()
+    finally:
+        connection.close()
+    return [int(row[0]) for row in rows]

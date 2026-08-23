@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import yaml
 
+from starcat_recsys.artifacts import artifact_for
 from starcat_recsys.cli import main
-from starcat_recsys.pipeline import run_pipeline
+from starcat_recsys.pipeline import _repository_ids_from_canonical, run_pipeline
 
 
 def test_runs_end_to_end_pipeline_and_cli_query(tmp_path: Path, capsys: object) -> None:
@@ -98,3 +101,12 @@ def _interaction(subject: str, repo_id: int, occurred_at: str) -> dict[str, obje
         "captured_at": "2026-01-01T00:00:00Z",
         "snapshot_id": f"snapshot-{subject}",
     }
+
+
+def test_selects_bounded_popular_repositories_for_deferred_metadata(tmp_path: Path) -> None:
+    path = tmp_path / "interactions.parquet"
+    pq.write_table(pa.table({"repo_id": [3, 2, 2, 1, 1, 1]}), path)
+
+    repo_ids = _repository_ids_from_canonical([artifact_for(path, "canonical_interactions", {})], 2)
+
+    assert repo_ids == [1, 2]
