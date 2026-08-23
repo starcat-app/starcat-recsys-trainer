@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import httpx
 import pytest
 
 from starcat_recsys.interfaces import Artifact, TaskContext
@@ -11,6 +12,7 @@ from starcat_recsys.sources.github import (
     GitHubMetadataConfig,
     GitHubRepositoryMetadataSource,
     GitHubResponse,
+    HttpxGitHubGateway,
 )
 
 
@@ -122,6 +124,31 @@ def test_collect_distinguishes_permission_denied_from_rate_limit(tmp_path: Path)
         GitHubRepositoryMetadataSource([1], GitHubMetadataConfig(), gateway).collect(
             _context(tmp_path)
         )
+
+
+def test_httpx_gateway_sends_auth_version_and_etag_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TEST_GITHUB_TOKEN", "secret-test-token")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == "https://api.github.com/repositories/42"
+        assert request.headers["authorization"] == "Bearer secret-test-token"
+        assert request.headers["x-github-api-version"] == "2026-03-10"
+        assert request.headers["if-none-match"] == '"etag-v1"'
+        return httpx.Response(200, headers={"ETag": '"etag-v2"'}, json={"id": 42})
+
+    gateway = HttpxGitHubGateway(
+        GitHubMetadataConfig(token_env="TEST_GITHUB_TOKEN"),
+        transport=httpx.MockTransport(handler),
+    )
+
+    response = gateway.fetch_repository(42, '"etag-v1"')
+    gateway.close()
+
+    assert response.status_code == 200
+    assert response.headers["etag"] == '"etag-v2"'
+    assert response.payload == {"id": 42}
 
 
 def _artifact_path(artifact: Artifact) -> Path:

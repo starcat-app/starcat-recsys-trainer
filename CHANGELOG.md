@@ -18,3 +18,4 @@ All notable changes to Starcat Recommendation Pipeline are documented here.
 - 新增可直接运行的本地完整示例、BigQuery 配置样例和中文操作手册。
 - 完成 Starcat `supports/` 独立私有项目登记。
 - 第二轮审查修复 run/Registry 不可变与路径安全、跨 run ETag cache、GitHub 403 分类和 SVD 退化输入。
+- 第三轮审查将 warning 纳入默认门禁，补齐 GitHub HTTP Adapter 测试，完成构建和进度收口。

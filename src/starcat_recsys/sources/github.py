@@ -58,7 +58,12 @@ class GitHubGateway(Protocol):
 class HttpxGitHubGateway:
     """使用 GitHub token 的生产 Gateway，token 不会写入 artifact。"""
 
-    def __init__(self, config: GitHubMetadataConfig) -> None:
+    def __init__(
+        self,
+        config: GitHubMetadataConfig,
+        *,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
         token = os.environ.get(config.token_env)
         if not token:
             raise RuntimeError(f"环境变量 {config.token_env} 未配置")
@@ -71,6 +76,7 @@ class HttpxGitHubGateway:
                 "X-GitHub-Api-Version": config.api_version,
                 "User-Agent": "starcat-recsys-trainer",
             },
+            transport=transport,
         )
 
     def fetch_repository(self, repo_id: int, etag: str | None) -> GitHubResponse:
