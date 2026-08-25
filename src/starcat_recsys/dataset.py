@@ -273,7 +273,7 @@ class DuckDBDatasetBuilder:
         report["eligible_subject_count"] = _count(connection, "eligible_subjects")
         report["training_eligible_subject_count"] = _count(
             connection,
-            "subject_statistics",
+            "eligible_subjects",
             f"train_repo_count >= {self._config.minimum_repositories_per_subject}",
         )
         report["missing_occurred_at_rows"] = _count(

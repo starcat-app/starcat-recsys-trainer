@@ -151,6 +151,9 @@ def test_filters_overactive_subjects_with_configured_upper_bound(tmp_path: Path)
     )
 
     assert {row["source_subject_id"] for row in dataset} == {"u2"}
+    report = json.loads((tmp_path / "workspace/dataset/quality-report.json").read_text())
+    assert report["eligible_subject_count"] == 1
+    assert report["training_eligible_subject_count"] == 1
 
 
 def test_rejects_inconsistent_dataset_activity_filters() -> None:
