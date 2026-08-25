@@ -114,6 +114,14 @@ def run_pipeline(config_path: Path) -> Artifact:
                 minimum_repositories_per_subject=int(
                     dataset_config.get("minimum_repositories_per_subject", 2)
                 ),
+                maximum_repositories_per_subject=(
+                    int(dataset_config["maximum_repositories_per_subject"])
+                    if dataset_config.get("maximum_repositories_per_subject") is not None
+                    else None
+                ),
+                minimum_repository_interactions=int(
+                    dataset_config.get("minimum_repository_interactions", 1)
+                ),
             )
         ).build(context, canonical),
     )

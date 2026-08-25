@@ -25,6 +25,8 @@ class DatasetConfig:
     train_end: datetime
     validation_end: datetime
     minimum_repositories_per_subject: int = 2
+    maximum_repositories_per_subject: int | None = None
+    minimum_repository_interactions: int = 1
 
     def __post_init__(self) -> None:
         train_end = parse_datetime(self.train_end)
@@ -35,6 +37,13 @@ class DatasetConfig:
             raise ValueError("validation_end 必须晚于 train_end")
         if self.minimum_repositories_per_subject < 2:
             raise ValueError("minimum_repositories_per_subject 不能小于 2")
+        if (
+            self.maximum_repositories_per_subject is not None
+            and self.maximum_repositories_per_subject < self.minimum_repositories_per_subject
+        ):
+            raise ValueError("maximum_repositories_per_subject 不能小于最小值")
+        if self.minimum_repository_interactions <= 0:
+            raise ValueError("minimum_repository_interactions 必须大于 0")
 
 
 class DuckDBDatasetBuilder:
@@ -95,6 +104,12 @@ class DuckDBDatasetBuilder:
                     "minimum_repositories_per_subject": (
                         self._config.minimum_repositories_per_subject
                     ),
+                    "maximum_repositories_per_subject": (
+                        self._config.maximum_repositories_per_subject
+                    ),
+                    "minimum_repository_interactions": (
+                        self._config.minimum_repository_interactions
+                    ),
                 },
                 **quality,
             },
@@ -105,24 +120,19 @@ class DuckDBDatasetBuilder:
         train_end = self._config.train_end.isoformat()
         validation_end = self._config.validation_end.isoformat()
         minimum = self._config.minimum_repositories_per_subject
+        maximum = self._config.maximum_repositories_per_subject
+        minimum_repository_interactions = self._config.minimum_repository_interactions
         connection.execute(
             """
             CREATE TEMP TABLE latest_repositories AS
             SELECT * EXCLUDE (row_number)
             FROM (
                 SELECT *, row_number() OVER (
-                    PARTITION BY repo_id ORDER BY fetched_at DESC
+                    PARTITION BY repo_id ORDER BY metadata_version DESC, fetched_at DESC
                 ) AS row_number
                 FROM source_repositories
             )
             WHERE row_number = 1
-            """
-        )
-        connection.execute(
-            """
-            CREATE TEMP TABLE valid_repositories AS
-            SELECT * FROM latest_repositories
-            WHERE visibility = 'public' AND NOT archived AND NOT disabled
             """
         )
         connection.execute(
@@ -157,6 +167,28 @@ class DuckDBDatasetBuilder:
                 FROM current_interactions
             )
             WHERE row_number = 1
+            """
+        )
+        connection.execute(
+            """
+            CREATE TEMP TABLE repository_interaction_statistics AS
+            SELECT
+                repo_id,
+                count(DISTINCT (source, source_subject_id)) AS observed_stargazer_count
+            FROM deduplicated_interactions
+            GROUP BY repo_id
+            """
+        )
+        connection.execute(
+            f"""
+            CREATE TEMP TABLE valid_repositories AS
+            SELECT r.*, s.observed_stargazer_count
+            FROM latest_repositories r
+            INNER JOIN repository_interaction_statistics s USING (repo_id)
+            WHERE r.visibility = 'public'
+              AND NOT r.archived
+              AND NOT r.disabled
+              AND s.observed_stargazer_count >= {minimum_repository_interactions}
             """
         )
         connection.execute(
@@ -199,12 +231,16 @@ class DuckDBDatasetBuilder:
             GROUP BY source, source_subject_id
             """
         )
+        maximum_predicate = (
+            f"AND total_repo_count <= {maximum}" if maximum is not None else ""
+        )
         connection.execute(
             f"""
             CREATE TEMP TABLE eligible_subjects AS
             SELECT *
             FROM subject_statistics
             WHERE total_repo_count >= {minimum}
+              {maximum_predicate}
             """
         )
         connection.execute(

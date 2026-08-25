@@ -7,6 +7,7 @@ from typing import cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from starcat_recsys.artifacts import artifact_for
 from starcat_recsys.canonical import INTERACTION_SCHEMA, REPOSITORY_SCHEMA
@@ -104,7 +105,87 @@ def test_collapses_repeated_subject_repo_to_first_star_event(tmp_path: Path) -> 
     assert repo_one[0]["occurred_at"] == _time("2025-01-01")
 
 
+def test_filters_repositories_by_distinct_observed_stargazers(tmp_path: Path) -> None:
+    rows = [
+        _interaction("u1:1", "u1", 1, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("u1:3", "u1", 3, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("u2:1", "u2", 1, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("u2:3", "u2", 3, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("u3:2", "u3", 2, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("u3:3", "u3", 3, "2025-01-01", "star_event", "2025-01-01"),
+    ]
+
+    dataset, repositories = _build_dataset_with_config(
+        tmp_path,
+        rows,
+        DatasetConfig(
+            train_end=datetime(2025, 4, 1, tzinfo=UTC),
+            validation_end=datetime(2025, 8, 1, tzinfo=UTC),
+            minimum_repository_interactions=2,
+        ),
+    )
+
+    assert {row["repo_id"] for row in dataset} == {1, 3}
+    assert {row["repo_id"] for row in repositories} == {1, 3}
+    counts = {row["repo_id"]: row["observed_stargazer_count"] for row in repositories}
+    assert counts == {1: 2, 3: 3}
+
+
+def test_filters_overactive_subjects_with_configured_upper_bound(tmp_path: Path) -> None:
+    rows = [
+        _interaction("u1:1", "u1", 1, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("u1:2", "u1", 2, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("u1:3", "u1", 3, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("u2:1", "u2", 1, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("u2:2", "u2", 2, "2025-01-01", "star_event", "2025-01-01"),
+    ]
+
+    dataset, _ = _build_dataset_with_config(
+        tmp_path,
+        rows,
+        DatasetConfig(
+            train_end=datetime(2025, 4, 1, tzinfo=UTC),
+            validation_end=datetime(2025, 8, 1, tzinfo=UTC),
+            maximum_repositories_per_subject=2,
+        ),
+    )
+
+    assert {row["source_subject_id"] for row in dataset} == {"u2"}
+
+
+def test_rejects_inconsistent_dataset_activity_filters() -> None:
+    with pytest.raises(ValueError, match="maximum_repositories_per_subject"):
+        DatasetConfig(
+            train_end=datetime(2025, 4, 1, tzinfo=UTC),
+            validation_end=datetime(2025, 8, 1, tzinfo=UTC),
+            minimum_repositories_per_subject=10,
+            maximum_repositories_per_subject=9,
+        )
+    with pytest.raises(ValueError, match="minimum_repository_interactions"):
+        DatasetConfig(
+            train_end=datetime(2025, 4, 1, tzinfo=UTC),
+            validation_end=datetime(2025, 8, 1, tzinfo=UTC),
+            minimum_repository_interactions=0,
+        )
+
+
 def _build_dataset(tmp_path: Path, rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    dataset, _ = _build_dataset_with_config(
+        tmp_path,
+        rows,
+        DatasetConfig(
+            train_end=datetime(2025, 4, 1, tzinfo=UTC),
+            validation_end=datetime(2025, 8, 1, tzinfo=UTC),
+        ),
+    )
+    return dataset
+
+
+def _build_dataset_with_config(
+    tmp_path: Path,
+    rows: list[dict[str, object]],
+    config: DatasetConfig,
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     interactions_path = tmp_path / "interactions.parquet"
     repositories_path = tmp_path / "repositories.parquet"
@@ -116,12 +197,7 @@ def _build_dataset(tmp_path: Path, rows: list[dict[str, object]]) -> list[dict[s
         ),
         repositories_path,
     )
-    artifacts = DuckDBDatasetBuilder(
-        DatasetConfig(
-            train_end=datetime(2025, 4, 1, tzinfo=UTC),
-            validation_end=datetime(2025, 8, 1, tzinfo=UTC),
-        )
-    ).build(
+    artifacts = DuckDBDatasetBuilder(config).build(
         TaskContext("run", tmp_path / "workspace", "sha256:test", 7),
         [
             artifact_for(interactions_path, "canonical_interactions", {}),
@@ -133,7 +209,15 @@ def _build_dataset(tmp_path: Path, rows: list[dict[str, object]]) -> list[dict[s
             "file://"
         )
     )
-    return cast(list[dict[str, object]], pq.read_table(dataset_path).to_pylist())
+    repository_path = Path(
+        next(item for item in artifacts if item.kind == "dataset_repositories").uri.removeprefix(
+            "file://"
+        )
+    )
+    return (
+        cast(list[dict[str, object]], pq.read_table(dataset_path).to_pylist()),
+        cast(list[dict[str, object]], pq.read_table(repository_path).to_pylist()),
+    )
 
 
 def _interaction(
