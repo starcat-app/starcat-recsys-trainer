@@ -1,14 +1,21 @@
-run_id: gharchive-2026-08
-workspace: ../workspace/gharchive-2026-08
+run_id: gharchive-2025
+workspace: ../workspace/gharchive-2025
 registry: ../workspace/registry
 random_seed: 42
 
 sources:
   - type: bigquery
     billing_project: replace-with-your-gcp-project
-    start_date: "2026-08-01"
-    end_date: "2026-08-07"
+    start_date: "2025-01-01"
+    end_date: "2025-12-31"
     maximum_bytes_billed_per_day: 10737418240
+    location: US
+  - type: bigquery_push_metadata
+    billing_project: replace-with-your-gcp-project
+    start_year: 2016
+    end_year: 2025
+    maximum_bytes_billed: 600000000000
+    minimum_push_events: 1
     location: US
   - type: github_api
     repo_ids_from_canonical: true
@@ -19,12 +26,14 @@ sources:
     api_version: "2026-03-10"
 
 dataset:
-  train_end: "2026-08-05T00:00:00Z"
-  validation_end: "2026-08-07T00:00:00Z"
-  minimum_repositories_per_subject: 2
+  train_end: "2025-10-01T00:00:00Z"
+  validation_end: "2025-12-01T00:00:00Z"
+  minimum_repositories_per_subject: 10
+  maximum_repositories_per_subject: 800
+  minimum_repository_interactions: 5
 
 training:
-  reference_time: "2026-08-05T00:00:00Z"
+  reference_time: "2025-10-01T00:00:00Z"
   top_k: 100
   svd_components: 64
   half_life_days: 365
@@ -39,6 +48,6 @@ evaluation:
   k: 20
 
 publish:
-  model_version: gharchive-2026-08-v1
+  model_version: gharchive-2025-v1
   selected_model: costar
   metric_gates: {}

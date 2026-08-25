@@ -7,6 +7,7 @@
 ## 已实现能力
 
 - GH Archive BigQuery `WatchEvent` 使用显式 UTC 日表采集，dry run 和 `maximum_bytes_billed` 双重预算门禁。
+- GH Archive BigQuery `PushEvent` 跨年份聚合仓库基础目录，提供最新名称、首次/末次 Push 和事件数，并使用独立总预算门禁。
 - GitHub Repository REST metadata 采集，支持 ETag cache、请求上限和限流识别。
 - Starcat schema v1 匿名完整 Star 快照校验、HMAC 脱敏和导入。
 - `starcat-collection-api` Admin 导出 Pull，校验响应 checksum、字节上限、schema 和 active 快照唯一性。
@@ -46,8 +47,9 @@ Registry 版本不可覆盖。重跑时同时修改 YAML 中的 `run_id` 和 `pu
 
 ```text
 SourceConnector
-  -> raw
+  -> WatchEvent 行为 raw + PushEvent 仓库目录 raw
   -> CanonicalNormalizer
+  -> GitHub API Top N 权威 metadata 覆盖
   -> canonical Parquet
   -> DuckDBDatasetBuilder
   -> train / validation / test
