@@ -78,6 +78,7 @@ SourceConnector
 - [Collection 本机 E2E 配置](configs/example-collection-local.yaml)
 - [架构设计](docs/架构设计.md)
 - [实施清单](docs/实施清单.md)
+- [BigQuery PushEvent 扩展完成结果报告](docs/BigQuery-PushEvent元数据扩展完成结果报告.md)
 - [贡献指南](CONTRIBUTING.md)
 - [安全说明](SECURITY.md)
 - [支持说明](SUPPORT.md)
