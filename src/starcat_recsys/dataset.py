@@ -231,9 +231,7 @@ class DuckDBDatasetBuilder:
             GROUP BY source, source_subject_id
             """
         )
-        maximum_predicate = (
-            f"AND total_repo_count <= {maximum}" if maximum is not None else ""
-        )
+        maximum_predicate = f"AND total_repo_count <= {maximum}" if maximum is not None else ""
         connection.execute(
             f"""
             CREATE TEMP TABLE eligible_subjects AS
