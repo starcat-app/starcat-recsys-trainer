@@ -9,6 +9,9 @@ sources:
     start_date: "2025-01-01"
     end_date: "2025-12-31"
     maximum_bytes_billed_per_day: 10737418240
+    maximum_total_bytes_billed: 600000000000
+    retry_attempts: 5
+    retry_initial_delay_seconds: 1
     location: US
   - type: bigquery_push_metadata
     billing_project: replace-with-your-gcp-project

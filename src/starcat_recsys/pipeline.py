@@ -301,6 +301,13 @@ def _source_connector(
                 end_date=date.fromisoformat(_required_string(config, "end_date")),
                 maximum_bytes_billed_per_day=int(config["maximum_bytes_billed_per_day"]),
                 location=str(config.get("location", "US")),
+                maximum_total_bytes_billed=(
+                    int(config["maximum_total_bytes_billed"])
+                    if config.get("maximum_total_bytes_billed") is not None
+                    else None
+                ),
+                retry_attempts=int(config.get("retry_attempts", 5)),
+                retry_initial_delay_seconds=float(config.get("retry_initial_delay_seconds", 1.0)),
             )
         )
     if source_type == "bigquery_push_metadata":

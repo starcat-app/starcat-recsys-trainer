@@ -1,10 +1,12 @@
 """BigQuery 数据源测试。"""
 
+import json
 from datetime import date
 from pathlib import Path
 
 import pyarrow as pa
 import pytest
+from google.api_core import exceptions as google_exceptions
 
 from starcat_recsys.interfaces import TaskContext
 from starcat_recsys.sources.bigquery import (
@@ -18,9 +20,11 @@ from starcat_recsys.sources.bigquery import (
 class FakeGateway:
     def __init__(self, estimates: dict[str, int]) -> None:
         self.estimates = estimates
+        self.estimate_calls: list[str] = []
         self.fetches: list[tuple[str, int]] = []
 
     def estimate_bytes(self, table_suffix: str) -> int:
+        self.estimate_calls.append(table_suffix)
         return self.estimates[table_suffix]
 
     def fetch_watch_events(self, table_suffix: str, maximum_bytes_billed: int) -> pa.Table:
@@ -35,6 +39,25 @@ class FakeGateway:
                 ],
             }
         )
+
+
+class FailingSecondGateway(FakeGateway):
+    def fetch_watch_events(self, table_suffix: str, maximum_bytes_billed: int) -> pa.Table:
+        if table_suffix == "20260823":
+            raise RuntimeError("simulated interruption")
+        return super().fetch_watch_events(table_suffix, maximum_bytes_billed)
+
+
+class FlakyGateway(FakeGateway):
+    def __init__(self, estimates: dict[str, int]) -> None:
+        super().__init__(estimates)
+        self.attempts = 0
+
+    def fetch_watch_events(self, table_suffix: str, maximum_bytes_billed: int) -> pa.Table:
+        self.attempts += 1
+        if self.attempts == 1:
+            raise google_exceptions.ServiceUnavailable("temporary")
+        return super().fetch_watch_events(table_suffix, maximum_bytes_billed)
 
 
 def make_context(tmp_path: Path) -> TaskContext:
@@ -76,6 +99,118 @@ def test_refuses_partition_over_budget(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="超过上限"):
         source.collect(make_context(tmp_path))
 
+    assert gateway.fetches == []
+
+
+def test_resumes_verified_partitions_without_querying_again(tmp_path: Path) -> None:
+    config = BigQueryConfig(
+        billing_project="starcat-test",
+        start_date=date(2026, 8, 22),
+        end_date=date(2026, 8, 22),
+        maximum_bytes_billed_per_day=1000,
+        maximum_total_bytes_billed=2000,
+    )
+    first_gateway = FakeGateway({"20260822": 100})
+    BigQueryWatchEventSource(config, first_gateway).collect(make_context(tmp_path))
+
+    resumed_gateway = FakeGateway({})
+    artifacts = BigQueryWatchEventSource(config, resumed_gateway).collect(make_context(tmp_path))
+
+    assert len(artifacts) == 1
+    assert resumed_gateway.estimate_calls == []
+    assert resumed_gateway.fetches == []
+
+
+def test_redownloads_partition_when_checkpoint_checksum_mismatches(tmp_path: Path) -> None:
+    config = BigQueryConfig(
+        billing_project="starcat-test",
+        start_date=date(2026, 8, 22),
+        end_date=date(2026, 8, 22),
+        maximum_bytes_billed_per_day=1000,
+    )
+    BigQueryWatchEventSource(config, FakeGateway({"20260822": 100})).collect(make_context(tmp_path))
+    partition = tmp_path / "raw" / "gh_archive" / "watch-events-20260822.parquet"
+    partition.write_bytes(b"corrupted")
+
+    gateway = FakeGateway({"20260822": 100})
+    BigQueryWatchEventSource(config, gateway).collect(make_context(tmp_path))
+
+    assert gateway.fetches == [("20260822", 1000)]
+    assert partition.read_bytes() != b"corrupted"
+
+
+def test_checkpoint_survives_later_partition_failure(tmp_path: Path) -> None:
+    gateway = FailingSecondGateway({"20260822": 100, "20260823": 200})
+    source = BigQueryWatchEventSource(
+        BigQueryConfig(
+            billing_project="starcat-test",
+            start_date=date(2026, 8, 22),
+            end_date=date(2026, 8, 23),
+            maximum_bytes_billed_per_day=1000,
+        ),
+        gateway,
+    )
+
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        source.collect(make_context(tmp_path))
+
+    state = json.loads((tmp_path / "raw" / "gh_archive" / "download-state.json").read_text())
+    assert list(state["completed_partitions"]) == ["20260822"]
+
+
+def test_retries_transient_google_error(tmp_path: Path) -> None:
+    gateway = FlakyGateway({"20260822": 100})
+    source = BigQueryWatchEventSource(
+        BigQueryConfig(
+            billing_project="starcat-test",
+            start_date=date(2026, 8, 22),
+            end_date=date(2026, 8, 22),
+            maximum_bytes_billed_per_day=1000,
+            retry_attempts=2,
+            retry_initial_delay_seconds=0,
+        ),
+        gateway,
+    )
+
+    source.collect(make_context(tmp_path))
+
+    assert gateway.attempts == 2
+    assert gateway.fetches == [("20260822", 1000)]
+
+
+def test_refuses_when_cumulative_estimate_exceeds_total_budget(tmp_path: Path) -> None:
+    gateway = FakeGateway({"20260822": 600, "20260823": 600})
+    source = BigQueryWatchEventSource(
+        BigQueryConfig(
+            billing_project="starcat-test",
+            start_date=date(2026, 8, 22),
+            end_date=date(2026, 8, 23),
+            maximum_bytes_billed_per_day=1000,
+            maximum_total_bytes_billed=1000,
+        ),
+        gateway,
+    )
+
+    with pytest.raises(RuntimeError, match="总上限"):
+        source.collect(make_context(tmp_path))
+
+    assert gateway.fetches == [("20260822", 1000)]
+
+
+def test_adopts_complete_partition_left_before_checkpoint(tmp_path: Path) -> None:
+    config = BigQueryConfig(
+        billing_project="starcat-test",
+        start_date=date(2026, 8, 22),
+        end_date=date(2026, 8, 22),
+        maximum_bytes_billed_per_day=1000,
+    )
+    BigQueryWatchEventSource(config, FakeGateway({"20260822": 100})).collect(make_context(tmp_path))
+    (tmp_path / "raw" / "gh_archive" / "download-state.json").unlink()
+
+    gateway = FakeGateway({"20260822": 100})
+    BigQueryWatchEventSource(config, gateway).collect(make_context(tmp_path))
+
+    assert gateway.estimate_calls == ["20260822"]
     assert gateway.fetches == []
 
 

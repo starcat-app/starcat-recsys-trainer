@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import logging
+from datetime import date
 from pathlib import Path
 
 from starcat_recsys.bundle import LocalModelRegistry, query_bundle, verify_bundle
+from starcat_recsys.interfaces import TaskContext
 from starcat_recsys.pipeline import run_pipeline
+from starcat_recsys.sources.bigquery import BigQueryConfig, BigQueryWatchEventSource
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -19,6 +24,23 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline_commands = pipeline.add_subparsers(dest="pipeline_command", required=True)
     run = pipeline_commands.add_parser("run", help="按 YAML 配置执行完整管道")
     run.add_argument("--config", type=Path, required=True)
+
+    bigquery = commands.add_parser("bigquery", help="管理 GH Archive BigQuery 原始数据")
+    bigquery_commands = bigquery.add_subparsers(dest="bigquery_command", required=True)
+    download_watch = bigquery_commands.add_parser(
+        "download-watch-events",
+        help="按 UTC 日分区下载 WatchEvent，支持断点续传",
+    )
+    download_watch.add_argument("--workspace", type=Path, required=True)
+    download_watch.add_argument("--billing-project", required=True)
+    download_watch.add_argument("--start-date", type=date.fromisoformat, required=True)
+    download_watch.add_argument("--end-date", type=date.fromisoformat, required=True)
+    download_watch.add_argument("--maximum-bytes-billed-per-day", type=int, required=True)
+    download_watch.add_argument("--maximum-total-bytes-billed", type=int, required=True)
+    download_watch.add_argument("--location", default="US")
+    download_watch.add_argument("--retry-attempts", type=int, default=5)
+    download_watch.add_argument("--retry-initial-delay-seconds", type=float, default=1.0)
+    download_watch.add_argument("--run-id", required=True)
 
     bundle = commands.add_parser("bundle", help="校验或查询 ServingBundle")
     bundle_commands = bundle.add_subparsers(dest="bundle_command", required=True)
@@ -41,6 +63,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """解析命令并返回进程退出码。"""
 
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
     parser = build_parser()
     arguments = parser.parse_args(argv)
     if arguments.command == "pipeline" and arguments.pipeline_command == "run":
@@ -64,6 +90,54 @@ def main(argv: list[str] | None = None) -> int:
     elif arguments.command == "registry" and arguments.registry_command == "activate":
         LocalModelRegistry(arguments.path).activate(arguments.version)
         print(json.dumps({"active": arguments.version}, ensure_ascii=False))
+    elif arguments.command == "bigquery" and arguments.bigquery_command == "download-watch-events":
+        config_document = {
+            "billing_project": arguments.billing_project,
+            "start_date": arguments.start_date.isoformat(),
+            "end_date": arguments.end_date.isoformat(),
+            "maximum_bytes_billed_per_day": arguments.maximum_bytes_billed_per_day,
+            "maximum_total_bytes_billed": arguments.maximum_total_bytes_billed,
+            "location": arguments.location,
+        }
+        config_hash = (
+            "sha256:"
+            + hashlib.sha256(json.dumps(config_document, sort_keys=True).encode()).hexdigest()
+        )
+        workspace = arguments.workspace.resolve()
+        workspace.mkdir(parents=True, exist_ok=True)
+        artifacts = BigQueryWatchEventSource(
+            BigQueryConfig(
+                billing_project=arguments.billing_project,
+                start_date=arguments.start_date,
+                end_date=arguments.end_date,
+                maximum_bytes_billed_per_day=arguments.maximum_bytes_billed_per_day,
+                maximum_total_bytes_billed=arguments.maximum_total_bytes_billed,
+                location=arguments.location,
+                retry_attempts=arguments.retry_attempts,
+                retry_initial_delay_seconds=arguments.retry_initial_delay_seconds,
+            )
+        ).collect(
+            TaskContext(
+                run_id=arguments.run_id,
+                workspace=workspace,
+                config_hash=config_hash,
+                random_seed=0,
+            )
+        )
+        print(
+            json.dumps(
+                {
+                    "workspace": workspace.as_posix(),
+                    "partition_count": len(artifacts),
+                    "row_count": sum(int(item.metadata["row_count"]) for item in artifacts),
+                    "estimated_total_bytes": sum(
+                        int(item.metadata["estimated_bytes"]) for item in artifacts
+                    ),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
     return 0
 
 

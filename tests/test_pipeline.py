@@ -11,12 +11,14 @@ import yaml
 
 from starcat_recsys.artifacts import artifact_for
 from starcat_recsys.cli import main
+from starcat_recsys.interfaces import Artifact, TaskContext
 from starcat_recsys.pipeline import (
     _repository_ids_from_canonical,
     _source_connector,
     _training_reference_time,
     run_pipeline,
 )
+from starcat_recsys.sources.bigquery import BigQueryConfig
 from starcat_recsys.sources.bigquery_push import BigQueryPushMetadataConfig
 
 
@@ -232,6 +234,91 @@ def test_builds_bigquery_push_metadata_connector(
     assert connector is marker
     assert captured[0].start_year == 2016
     assert captured[0].minimum_push_events == 2
+
+
+def test_builds_bigquery_connector_with_resume_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: list[BigQueryConfig] = []
+    marker = object()
+    monkeypatch.setattr(
+        "starcat_recsys.pipeline.BigQueryWatchEventSource",
+        lambda config: captured.append(config) or marker,
+    )
+
+    connector = _source_connector(
+        {
+            "type": "bigquery",
+            "billing_project": "starcat-test",
+            "start_date": "2026-08-22",
+            "end_date": "2026-08-23",
+            "maximum_bytes_billed_per_day": 1_000,
+            "maximum_total_bytes_billed": 2_000,
+            "retry_attempts": 7,
+            "retry_initial_delay_seconds": 2,
+        },
+        tmp_path,
+    )
+
+    assert connector is marker
+    assert captured[0].maximum_total_bytes_billed == 2_000
+    assert captured[0].retry_attempts == 7
+    assert captured[0].retry_initial_delay_seconds == 2
+
+
+def test_download_watch_events_cli_reports_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: object
+) -> None:
+    captured: list[tuple[BigQueryConfig, TaskContext]] = []
+    raw = tmp_path / "fixture.parquet"
+    raw.write_bytes(b"fixture")
+
+    class FakeWatchSource:
+        def __init__(self, config: BigQueryConfig) -> None:
+            self.config = config
+
+        def collect(self, context: TaskContext) -> list[Artifact]:
+            captured.append((self.config, context))
+            return [
+                Artifact(
+                    kind="raw_interactions",
+                    uri=raw.resolve().as_uri(),
+                    checksum="sha256:fixture",
+                    metadata={"row_count": 123, "estimated_bytes": 456},
+                )
+            ]
+
+    monkeypatch.setattr("starcat_recsys.cli.BigQueryWatchEventSource", FakeWatchSource)
+
+    assert (
+        main(
+            [
+                "bigquery",
+                "download-watch-events",
+                "--workspace",
+                (tmp_path / "download").as_posix(),
+                "--billing-project",
+                "starcat-test",
+                "--start-date",
+                "2026-08-22",
+                "--end-date",
+                "2026-08-23",
+                "--maximum-bytes-billed-per-day",
+                "1000",
+                "--maximum-total-bytes-billed",
+                "2000",
+                "--run-id",
+                "watch-test",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)  # type: ignore[attr-defined]
+    assert output["partition_count"] == 1
+    assert output["row_count"] == 123
+    assert captured[0][0].maximum_total_bytes_billed == 2_000
+    assert captured[0][1].run_id == "watch-test"
 
 
 def test_rejects_training_reference_time_different_from_train_end() -> None:

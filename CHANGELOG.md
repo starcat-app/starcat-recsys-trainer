@@ -4,6 +4,7 @@ All notable changes to Starcat Recommendation Pipeline are documented here.
 
 ## Unreleased
 
+- 新增 WatchEvent 独立下载 CLI、分区断点续传、原子 checkpoint、瞬时错误重试与累计扫描预算门禁。
 - 新增 GH Archive BigQuery `PushEvent` 仓库基础目录采集，并由 GitHub API 对 Top N 候选执行权威 metadata 覆盖。
 - 新增查询窗口内仓库观察支持度、主体最小/最大仓库数过滤，适配扩大后的 BigQuery 训练数据。
 - 新增 `starcat_collection_api` Pull Connector，校验 Admin 导出 checksum、schema、数量上限与 active 主体唯一性，并复用现有 Starcat canonical 训练链路。
