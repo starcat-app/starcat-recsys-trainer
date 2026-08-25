@@ -170,25 +170,27 @@ class DuckDBDatasetBuilder:
             """
         )
         connection.execute(
-            """
+            f"""
             CREATE TEMP TABLE repository_interaction_statistics AS
             SELECT
                 repo_id,
-                count(DISTINCT (source, source_subject_id)) AS observed_stargazer_count
+                count(DISTINCT (source, source_subject_id)) AS training_stargazer_count
             FROM deduplicated_interactions
+            WHERE occurred_at IS NULL
+               OR occurred_at < TIMESTAMPTZ '{train_end}'
             GROUP BY repo_id
             """
         )
         connection.execute(
             f"""
             CREATE TEMP TABLE valid_repositories AS
-            SELECT r.*, s.observed_stargazer_count
+            SELECT r.*, s.training_stargazer_count
             FROM latest_repositories r
             INNER JOIN repository_interaction_statistics s USING (repo_id)
             WHERE r.visibility = 'public'
               AND NOT r.archived
               AND NOT r.disabled
-              AND s.observed_stargazer_count >= {minimum_repository_interactions}
+              AND s.training_stargazer_count >= {minimum_repository_interactions}
             """
         )
         connection.execute(

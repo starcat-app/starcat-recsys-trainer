@@ -53,9 +53,10 @@ def test_builds_latest_public_deduplicated_time_split_dataset(tmp_path: Path) ->
     dataset = pq.read_table(
         Path(next(item for item in artifacts if item.kind == "training_dataset").uri[7:])
     ).to_pylist()
-    assert len(dataset) == 5
-    assert {row["repo_id"] for row in dataset} == {1, 2, 4}
-    assert {row["split"] for row in dataset} == {"train", "validation", "test"}
+    # repo 4 只在 test 窗口出现，不能借未来互动进入训练 catalog。
+    assert len(dataset) == 4
+    assert {row["repo_id"] for row in dataset} == {1, 2}
+    assert {row["split"] for row in dataset} == {"train", "validation"}
     assert all(row["sample_weight"] > 0 for row in dataset)
     assert {row["training_eligible"] for row in dataset if row["source"] == "starcat_snapshot"} == {
         True
@@ -65,8 +66,8 @@ def test_builds_latest_public_deduplicated_time_split_dataset(tmp_path: Path) ->
     assert report["input_interaction_rows"] == 9
     assert report["latest_snapshot_rows"] == 7
     assert report["deduplicated_rows"] == 6
-    assert report["public_repository_rows"] == 5
-    assert report["unique_subject_repository_rows"] == 5
+    assert report["public_repository_rows"] == 4
+    assert report["unique_subject_repository_rows"] == 4
     assert report["training_eligible_subject_count"] == 1
 
 
@@ -127,8 +128,32 @@ def test_filters_repositories_by_distinct_observed_stargazers(tmp_path: Path) ->
 
     assert {row["repo_id"] for row in dataset} == {1, 3}
     assert {row["repo_id"] for row in repositories} == {1, 3}
-    counts = {row["repo_id"]: row["observed_stargazer_count"] for row in repositories}
+    counts = {row["repo_id"]: row["training_stargazer_count"] for row in repositories}
     assert counts == {1: 2, 3: 3}
+
+
+def test_future_stars_do_not_satisfy_repository_support_threshold(tmp_path: Path) -> None:
+    rows = [
+        _interaction("u1:1", "u1", 1, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("u1:3", "u1", 3, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("u1:4", "u1", 4, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("u2:1", "u2", 1, "2025-07-01", "star_event", "2025-07-01"),
+        _interaction("u2:3", "u2", 3, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("u2:4", "u2", 4, "2025-01-01", "star_event", "2025-01-01"),
+    ]
+
+    dataset, repositories = _build_dataset_with_config(
+        tmp_path,
+        rows,
+        DatasetConfig(
+            train_end=datetime(2025, 4, 1, tzinfo=UTC),
+            validation_end=datetime(2025, 8, 1, tzinfo=UTC),
+            minimum_repository_interactions=2,
+        ),
+    )
+
+    assert {row["repo_id"] for row in repositories} == {3, 4}
+    assert {row["repo_id"] for row in dataset} == {3, 4}
 
 
 def test_filters_overactive_subjects_with_configured_upper_bound(tmp_path: Path) -> None:
