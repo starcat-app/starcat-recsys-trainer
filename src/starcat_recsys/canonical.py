@@ -75,8 +75,14 @@ class CanonicalNormalizer:
                 interactions.extend(_normalize_starcat_snapshot(_artifact_path(artifact)))
             elif source == "github_api":
                 repositories.extend(_normalize_github_metadata(_artifact_path(artifact)))
+            elif source == "gh_archive_push":
+                repositories.extend(_normalize_gh_archive_push_metadata(_artifact_path(artifact)))
             else:
                 raise ValueError(f"不支持的 artifact source：{source}")
+
+        # PushEvent 是可大规模获取的基础目录，GitHub API 是小范围权威补全。
+        # 在 canonical 边界收敛为每个 repo_id 一行，避免下游 join 放大互动数据。
+        repositories = _merge_repository_metadata(repositories)
 
         output_directory = context.workspace / "canonical"
         output_directory.mkdir(parents=True, exist_ok=True)
@@ -189,6 +195,53 @@ def _normalize_github_metadata(path: Path) -> list[RepositoryRecord]:
             )
         )
     return records
+
+
+def _normalize_gh_archive_push_metadata(path: Path) -> list[RepositoryRecord]:
+    """把 PushEvent 聚合结果映射为保守的仓库基础 metadata。
+
+    GH Archive 只记录事件发生时公开可见的仓库，不提供当前 archived/disabled 等状态。
+    因此这些缺省值只用于扩大候选目录，最终 Top N 应继续由 GitHub API 覆盖。
+    """
+
+    records = []
+    for row in pq.read_table(path).to_pylist():
+        fetched_at = parse_datetime(row["fetched_at"])
+        if fetched_at is None:
+            raise ValueError("PushEvent metadata fetched_at 不能为空")
+        records.append(
+            RepositoryRecord(
+                repo_id=int(row["repo_id"]),
+                full_name=str(row["full_name"]),
+                description=None,
+                topics=(),
+                primary_language=None,
+                license_key=None,
+                stars=0,
+                forks=0,
+                archived=False,
+                disabled=False,
+                visibility="public",
+                pushed_at=parse_datetime(row["last_push_at"]),
+                fetched_at=fetched_at,
+                metadata_version=0,
+            )
+        )
+    return records
+
+
+def _merge_repository_metadata(records: list[RepositoryRecord]) -> list[RepositoryRecord]:
+    """按来源精度和采集时间选择每个仓库唯一的 canonical metadata。"""
+
+    selected: dict[int, RepositoryRecord] = {}
+    for record in records:
+        previous = selected.get(record.repo_id)
+        if previous is None or (record.metadata_version, record.fetched_at) > (
+            previous.metadata_version,
+            previous.fetched_at,
+        ):
+            selected[record.repo_id] = record
+    return [selected[repo_id] for repo_id in sorted(selected)]
 
 
 def _write_records(path: Path, rows: list[dict[str, Any]], schema: pa.Schema) -> None:

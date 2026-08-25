@@ -77,11 +77,36 @@ def test_normalizes_all_sources_without_cross_source_identity_join(tmp_path: Pat
         )
         + "\n"
     )
+    push_path = raw / "push.parquet"
+    pq.write_table(
+        pa.table(
+            {
+                "repo_id": [1, 2],
+                "full_name": ["old-owner/repo", "starcat/push-only"],
+                "first_push_at": [
+                    "2020-01-01T00:00:00Z",
+                    "2021-01-01T00:00:00Z",
+                ],
+                "last_push_at": [
+                    "2025-01-01T00:00:00Z",
+                    "2025-02-01T00:00:00Z",
+                ],
+                "push_event_count": [100, 20],
+                # 故意晚于 GitHub API；来源精度必须优先于采集时间。
+                "fetched_at": [
+                    "2026-02-01T00:00:00Z",
+                    "2026-02-01T00:00:00Z",
+                ],
+            }
+        ),
+        push_path,
+    )
     inputs = [
         artifact_for(gh_path, "raw_interactions", {"source": "gh_archive"}),
         artifact_for(starcat_path, "raw_interactions", {"source": "starcat_snapshot"}),
         artifact_for(collection_path, "raw_interactions", {"source": "starcat_collection_api"}),
         artifact_for(github_path, "raw_repositories", {"source": "github_api"}),
+        artifact_for(push_path, "raw_repositories", {"source": "gh_archive_push"}),
     ]
 
     artifacts = CanonicalNormalizer().normalize(
@@ -99,5 +124,10 @@ def test_normalizes_all_sources_without_cross_source_identity_join(tmp_path: Pat
 
     repository_artifact = next(item for item in artifacts if item.kind == "canonical_repositories")
     repositories = pq.read_table(Path(repository_artifact.uri.removeprefix("file://"))).to_pylist()
+    assert len(repositories) == 2
+    assert repositories[0]["full_name"] == "starcat/repo"
     assert repositories[0]["topics"] == ["macos", "swift"]
+    assert repositories[0]["metadata_version"] == 1
+    assert repositories[1]["full_name"] == "starcat/push-only"
+    assert repositories[1]["metadata_version"] == 0
     assert (tmp_path / "workspace/canonical/manifest.json").exists()

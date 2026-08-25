@@ -31,6 +31,10 @@ from starcat_recsys.interfaces import (
 )
 from starcat_recsys.publishers import RecommendAPIBundlePublisher, RecommendAPIPublishConfig
 from starcat_recsys.sources.bigquery import BigQueryConfig, BigQueryWatchEventSource
+from starcat_recsys.sources.bigquery_push import (
+    BigQueryPushEventMetadataSource,
+    BigQueryPushMetadataConfig,
+)
 from starcat_recsys.sources.github import (
     GitHubMetadataConfig,
     GitHubRepositoryMetadataSource,
@@ -288,6 +292,17 @@ def _source_connector(
                 start_date=date.fromisoformat(_required_string(config, "start_date")),
                 end_date=date.fromisoformat(_required_string(config, "end_date")),
                 maximum_bytes_billed_per_day=int(config["maximum_bytes_billed_per_day"]),
+                location=str(config.get("location", "US")),
+            )
+        )
+    if source_type == "bigquery_push_metadata":
+        return BigQueryPushEventMetadataSource(
+            BigQueryPushMetadataConfig(
+                billing_project=_required_string(config, "billing_project"),
+                start_year=int(config["start_year"]),
+                end_year=int(config["end_year"]),
+                maximum_bytes_billed=int(config["maximum_bytes_billed"]),
+                minimum_push_events=int(config.get("minimum_push_events", 1)),
                 location=str(config.get("location", "US")),
             )
         )

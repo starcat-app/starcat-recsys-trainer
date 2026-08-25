@@ -13,9 +13,11 @@ from starcat_recsys.artifacts import artifact_for
 from starcat_recsys.cli import main
 from starcat_recsys.pipeline import (
     _repository_ids_from_canonical,
+    _source_connector,
     _training_reference_time,
     run_pipeline,
 )
+from starcat_recsys.sources.bigquery_push import BigQueryPushMetadataConfig
 
 
 def test_runs_end_to_end_pipeline_and_cli_query(tmp_path: Path, capsys: object) -> None:
@@ -204,6 +206,32 @@ def test_selects_bounded_popular_repositories_for_deferred_metadata(tmp_path: Pa
     repo_ids = _repository_ids_from_canonical([artifact_for(path, "canonical_interactions", {})], 2)
 
     assert repo_ids == [1, 2]
+
+
+def test_builds_bigquery_push_metadata_connector(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: list[BigQueryPushMetadataConfig] = []
+    marker = object()
+    monkeypatch.setattr(
+        "starcat_recsys.pipeline.BigQueryPushEventMetadataSource",
+        lambda config: captured.append(config) or marker,
+    )
+    connector = _source_connector(
+        {
+            "type": "bigquery_push_metadata",
+            "billing_project": "starcat-test",
+            "start_year": 2016,
+            "end_year": 2025,
+            "maximum_bytes_billed": 800_000_000_000,
+            "minimum_push_events": 2,
+        },
+        tmp_path,
+    )
+
+    assert connector is marker
+    assert captured[0].start_year == 2016
+    assert captured[0].minimum_push_events == 2
 
 
 def test_rejects_training_reference_time_different_from_train_end() -> None:

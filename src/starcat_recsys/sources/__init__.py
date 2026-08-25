@@ -1,6 +1,10 @@
 """内置数据源 Connector。"""
 
 from starcat_recsys.sources.bigquery import BigQueryConfig, BigQueryWatchEventSource
+from starcat_recsys.sources.bigquery_push import (
+    BigQueryPushEventMetadataSource,
+    BigQueryPushMetadataConfig,
+)
 from starcat_recsys.sources.starcat_collection import (
     StarcatCollectionAPISource,
     StarcatCollectionConfig,
@@ -8,6 +12,8 @@ from starcat_recsys.sources.starcat_collection import (
 
 __all__ = [
     "BigQueryConfig",
+    "BigQueryPushEventMetadataSource",
+    "BigQueryPushMetadataConfig",
     "BigQueryWatchEventSource",
     "StarcatCollectionAPISource",
     "StarcatCollectionConfig",
