@@ -175,55 +175,67 @@ class BigQueryWatchEventSource:
             if saved is not None:
                 LOGGER.warning("分区 %s 与 checkpoint 不一致，将重新下载", suffix)
 
-            estimated_bytes = int(
-                self._with_retry(
-                    f"dry run {suffix}",
-                    partial(self._gateway.estimate_bytes, suffix),
-                )
-            )
-            if estimated_bytes > self._config.maximum_bytes_billed_per_day:
-                raise RuntimeError(
-                    f"BigQuery 分区 {suffix} 预计扫描 {estimated_bytes} 字节，"
-                    f"超过上限 {self._config.maximum_bytes_billed_per_day}"
-                )
-            self._enforce_total_budget(estimated_total_bytes + estimated_bytes)
-
-            # 文件成功替换、checkpoint 尚未来得及写入时，下次运行可以收养这个孤立分区；
-            # 若已有 checkpoint 却校验失败，则必须重新查询，不能把被篡改文件重新登记为正确产物。
-            if saved is None and _partition_is_readable(path):
-                row_count = pq.read_metadata(path).num_rows
-                artifact = artifact_for(
-                    path,
-                    "raw_interactions",
-                    _partition_metadata(suffix, row_count, estimated_bytes),
-                )
-                LOGGER.info("[%s/%s] 已收养完整分区 %s", index, len(dates), suffix)
-            else:
-                table = self._with_retry(
-                    f"download {suffix}",
-                    partial(
-                        self._gateway.fetch_watch_events,
-                        suffix,
-                        self._config.maximum_bytes_billed_per_day,
-                    ),
-                )
-                if not isinstance(table, pa.Table):
-                    raise TypeError("BigQuery Gateway 必须返回 pyarrow.Table")
-                _validate_table_columns(table.column_names)
+            estimated_bytes, is_missing_partition = self._estimate_partition(suffix)
+            if is_missing_partition:
+                # GH Archive 历史数据存在少量缺失日表。空 Parquet 仍作为已完成分区进入
+                # checkpoint，避免每次恢复时重复请求同一个确定不存在的历史日期。
+                table = _empty_watch_event_table()
                 _write_parquet_atomic(table, path)
                 artifact = artifact_for(
                     path,
                     "raw_interactions",
-                    _partition_metadata(suffix, table.num_rows, estimated_bytes),
+                    _partition_metadata(suffix, 0, 0),
                 )
-                LOGGER.info(
-                    "[%s/%s] 已下载分区 %s：%s 行，扫描 %s 字节",
+                LOGGER.warning(
+                    "[%s/%s] GH Archive 日表 %s 不存在，已记录为空分区",
                     index,
                     len(dates),
                     suffix,
-                    table.num_rows,
-                    estimated_bytes,
                 )
+            else:
+                if estimated_bytes > self._config.maximum_bytes_billed_per_day:
+                    raise RuntimeError(
+                        f"BigQuery 分区 {suffix} 预计扫描 {estimated_bytes} 字节，"
+                        f"超过上限 {self._config.maximum_bytes_billed_per_day}"
+                    )
+                self._enforce_total_budget(estimated_total_bytes + estimated_bytes)
+
+                # 文件成功替换、checkpoint 尚未来得及写入时，下次运行可以收养这个孤立分区；
+                # 若已有 checkpoint 却校验失败，则必须重新查询，不能把被篡改文件重新登记为正确产物。
+                if saved is None and _partition_is_readable(path):
+                    row_count = pq.read_metadata(path).num_rows
+                    artifact = artifact_for(
+                        path,
+                        "raw_interactions",
+                        _partition_metadata(suffix, row_count, estimated_bytes),
+                    )
+                    LOGGER.info("[%s/%s] 已收养完整分区 %s", index, len(dates), suffix)
+                else:
+                    table = self._with_retry(
+                        f"download {suffix}",
+                        partial(
+                            self._gateway.fetch_watch_events,
+                            suffix,
+                            self._config.maximum_bytes_billed_per_day,
+                        ),
+                    )
+                    if not isinstance(table, pa.Table):
+                        raise TypeError("BigQuery Gateway 必须返回 pyarrow.Table")
+                    _validate_table_columns(table.column_names)
+                    _write_parquet_atomic(table, path)
+                    artifact = artifact_for(
+                        path,
+                        "raw_interactions",
+                        _partition_metadata(suffix, table.num_rows, estimated_bytes),
+                    )
+                    LOGGER.info(
+                        "[%s/%s] 已下载分区 %s：%s 行，扫描 %s 字节",
+                        index,
+                        len(dates),
+                        suffix,
+                        table.num_rows,
+                        estimated_bytes,
+                    )
 
             estimated_total_bytes += estimated_bytes
             artifacts.append(artifact)
@@ -273,6 +285,24 @@ class BigQueryWatchEventSource:
                 f"超过总上限 {maximum}"
             )
 
+    def _estimate_partition(self, suffix: str) -> tuple[int, bool]:
+        """返回分区预计扫描量，并只把明确缺失的 GH Archive 日表视为空分区。"""
+
+        try:
+            estimated_bytes = int(
+                self._with_retry(
+                    f"dry run {suffix}",
+                    partial(self._gateway.estimate_bytes, suffix),
+                )
+            )
+        except google_exceptions.NotFound as error:
+            # NotFound 也可能表示 billing project 配置错误。只有错误正文明确指向当前
+            # GH Archive 日表时才能跳过，其他 404 必须继续暴露，避免静默生成全空数据。
+            if not _is_missing_day_table(error, suffix):
+                raise
+            return 0, True
+        return estimated_bytes, False
+
     def _with_retry(self, operation: str, callback: Callable[[], _T]) -> _T:
         """只重试 Google 明确标识的瞬时错误，权限和预算错误立即暴露。"""
 
@@ -302,6 +332,24 @@ def _partition_metadata(suffix: str, row_count: int, estimated_bytes: int) -> di
         "row_count": row_count,
         "estimated_bytes": estimated_bytes,
     }
+
+
+def _empty_watch_event_table() -> pa.Table:
+    """创建与 BigQuery WatchEvent 查询结果一致的零行 Arrow 表。"""
+
+    return pa.table(
+        {
+            "source_record_id": pa.array([], type=pa.string()),
+            "actor_id": pa.array([], type=pa.string()),
+            "repo_id": pa.array([], type=pa.int64()),
+            "created_at": pa.array([], type=pa.timestamp("us", tz="UTC")),
+        }
+    )
+
+
+def _is_missing_day_table(error: google_exceptions.NotFound, suffix: str) -> bool:
+    expected_table = f"Table githubarchive:day.{suffix} was not found"
+    return expected_table in str(error)
 
 
 def _load_download_state(path: Path, expected_scope: dict[str, Any]) -> dict[str, dict[str, Any]]:

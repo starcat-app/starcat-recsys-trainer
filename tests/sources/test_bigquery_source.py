@@ -5,6 +5,7 @@ from datetime import date
 from pathlib import Path
 
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 from google.api_core import exceptions as google_exceptions
 from requests import exceptions as requests_exceptions
@@ -73,6 +74,18 @@ class FlakyTransportGateway(FakeGateway):
         if self.attempts == 1:
             raise requests_exceptions.SSLError("temporary TLS EOF")
         return super().fetch_watch_events(table_suffix, maximum_bytes_billed)
+
+
+class MissingDayGateway(FakeGateway):
+    """模拟 GH Archive 历史日期没有对应日表。"""
+
+    def estimate_bytes(self, table_suffix: str) -> int:
+        self.estimate_calls.append(table_suffix)
+        if table_suffix == "20260822":
+            raise google_exceptions.NotFound(
+                "Not found: Table githubarchive:day.20260822 was not found in location US"
+            )
+        return self.estimates[table_suffix]
 
 
 def make_context(tmp_path: Path) -> TaskContext:
@@ -211,6 +224,29 @@ def test_retries_transient_transport_error(tmp_path: Path) -> None:
 
     assert gateway.attempts == 2
     assert gateway.fetches == [("20260822", 1000)]
+
+
+def test_records_missing_historical_day_as_empty_partition(tmp_path: Path) -> None:
+    gateway = MissingDayGateway({"20260823": 200})
+    source = BigQueryWatchEventSource(
+        BigQueryConfig(
+            billing_project="starcat-test",
+            start_date=date(2026, 8, 22),
+            end_date=date(2026, 8, 23),
+            maximum_bytes_billed_per_day=1000,
+        ),
+        gateway,
+    )
+
+    artifacts = source.collect(make_context(tmp_path))
+
+    missing_partition = tmp_path / "raw" / "gh_archive" / "watch-events-20260822.parquet"
+    assert len(artifacts) == 2
+    assert pq.read_metadata(missing_partition).num_rows == 0
+    assert gateway.estimate_calls == ["20260822", "20260823"]
+    assert gateway.fetches == [("20260823", 1000)]
+    state = json.loads((tmp_path / "raw" / "gh_archive" / "download-state.json").read_text())
+    assert state["completed_partitions"]["20260822"]["metadata"]["estimated_bytes"] == 0
 
 
 def test_refuses_when_cumulative_estimate_exceeds_total_budget(tmp_path: Path) -> None:
