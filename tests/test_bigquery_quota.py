@@ -9,6 +9,7 @@ from starcat_recsys.bigquery_quota import (
     BigQueryQuotaUsage,
     _monthly_usage_query,
     format_quota_usage,
+    quota_usage_document,
     read_bigquery_quota,
 )
 
@@ -62,3 +63,16 @@ def test_builds_region_scoped_monthly_jobs_query() -> None:
 
     assert "`region-us`.INFORMATION_SCHEMA.JOBS_BY_PROJECT" in query
     assert "TIMESTAMP_TRUNC(CURRENT_TIMESTAMP(), MONTH)" in query
+
+
+def test_builds_stable_console_quota_document() -> None:
+    document = quota_usage_document(
+        BigQueryQuotaUsage(query_jobs=2, billed_bytes=100, processed_bytes=200),
+        warning_percent=80,
+        stop_percent=90,
+    )
+
+    assert document["schema_version"] == 1
+    assert document["billed_bytes"] == 100
+    assert document["remaining_bytes"] > 0
+    assert document["should_stop"] is False

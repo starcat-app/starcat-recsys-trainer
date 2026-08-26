@@ -9,9 +9,16 @@ import logging
 from datetime import date
 from pathlib import Path
 
+from starcat_recsys.bigquery_lab import (
+    GoogleBigQueryLabGateway,
+    dry_run_sql_lab,
+    query_sql_lab,
+    read_sql_file,
+)
 from starcat_recsys.bigquery_quota import (
     QUOTA_STOP_EXIT_CODE,
     format_quota_usage,
+    quota_usage_document,
     read_bigquery_quota,
 )
 from starcat_recsys.bundle import LocalModelRegistry, query_bundle, verify_bundle
@@ -66,6 +73,19 @@ def build_parser() -> argparse.ArgumentParser:
     quota_usage.add_argument("--location", default="US")
     quota_usage.add_argument("--warning-percent", type=float, default=80)
     quota_usage.add_argument("--stop-percent", type=float, default=90)
+    quota_usage.add_argument("--format", choices=("text", "json"), default="text")
+    sql_dry_run = bigquery_commands.add_parser(
+        "sql-lab-dry-run",
+        help="对本机 SQL Lab 的只读查询执行 dry run",
+    )
+    _add_sql_lab_arguments(sql_dry_run)
+    sql_query = bigquery_commands.add_parser(
+        "sql-lab-query",
+        help="执行已经 dry run 且预算一致的 SQL Lab 查询",
+    )
+    _add_sql_lab_arguments(sql_query)
+    sql_query.add_argument("--expected-sql-sha256", required=True)
+    sql_query.add_argument("--maximum-result-rows", type=int, default=200)
 
     bundle = commands.add_parser("bundle", help="校验或查询 ServingBundle")
     bundle_commands = bundle.add_subparsers(dest="bundle_command", required=True)
@@ -178,9 +198,51 @@ def main(argv: list[str] | None = None) -> int:
             warning_percent=arguments.warning_percent,
             stop_percent=arguments.stop_percent,
         )
-        print(line)
+        if arguments.format == "json":
+            print(
+                json.dumps(
+                    quota_usage_document(
+                        usage,
+                        warning_percent=arguments.warning_percent,
+                        stop_percent=arguments.stop_percent,
+                    ),
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            print(line)
         return QUOTA_STOP_EXIT_CODE if should_stop else 0
+    elif arguments.command == "bigquery" and arguments.bigquery_command in {
+        "sql-lab-dry-run",
+        "sql-lab-query",
+    }:
+        sql = read_sql_file(arguments.sql_file)
+        gateway = GoogleBigQueryLabGateway(arguments.billing_project, arguments.location)
+        if arguments.bigquery_command == "sql-lab-dry-run":
+            document = dry_run_sql_lab(sql, arguments.maximum_bytes_billed, gateway)
+        else:
+            quota = read_bigquery_quota(arguments.billing_project, arguments.location)
+            _, should_stop = format_quota_usage(quota, warning_percent=80, stop_percent=90)
+            if should_stop:
+                raise RuntimeError("BigQuery 月度用量已达到 90% 停止阈值")
+            document = query_sql_lab(
+                sql,
+                arguments.maximum_bytes_billed,
+                arguments.expected_sql_sha256,
+                arguments.maximum_result_rows,
+                gateway,
+            )
+        print(json.dumps(document, ensure_ascii=False))
     return 0
+
+
+def _add_sql_lab_arguments(parser: argparse.ArgumentParser) -> None:
+    """SQL 文本只通过文件传递，避免出现在 argv 和进程列表。"""
+
+    parser.add_argument("--sql-file", type=Path, required=True)
+    parser.add_argument("--billing-project", required=True)
+    parser.add_argument("--location", default="US")
+    parser.add_argument("--maximum-bytes-billed", type=int, required=True)
 
 
 if __name__ == "__main__":

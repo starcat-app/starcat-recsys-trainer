@@ -73,6 +73,29 @@ def format_quota_usage(
 ) -> tuple[str, bool]:
     """返回适合长期日志的额度摘要，以及是否达到停止阈值。"""
 
+    document = quota_usage_document(
+        usage,
+        warning_percent=warning_percent,
+        stop_percent=stop_percent,
+    )
+    line = (
+        "BigQuery 本月项目计费额度："
+        f"{_gib(usage.billed_bytes):.2f} GiB / 1024.00 GiB "
+        f"({document['used_percent']:.2f}%)，"
+        f"剩余 {_gib(int(document['remaining_bytes'])):.2f} GiB，"
+        f"查询 {usage.query_jobs} 次，状态：{document['status']}"
+    )
+    return line, bool(document["should_stop"])
+
+
+def quota_usage_document(
+    usage: BigQueryQuotaUsage,
+    *,
+    warning_percent: float,
+    stop_percent: float,
+) -> dict[str, int | float | str | bool]:
+    """返回控制台可直接消费的稳定月度额度文档。"""
+
     if not 0 < warning_percent < stop_percent <= 100:
         raise ValueError("额度阈值必须满足 0 < warning < stop <= 100")
     used_percent = usage.billed_bytes / BIGQUERY_MONTHLY_FREE_TIER_BYTES * 100
@@ -82,13 +105,19 @@ def format_quota_usage(
         status = "已达到停止阈值"
     elif used_percent >= warning_percent:
         status = "警告"
-    line = (
-        "BigQuery 本月项目计费额度："
-        f"{_gib(usage.billed_bytes):.2f} GiB / 1024.00 GiB "
-        f"({used_percent:.2f}%)，剩余 {_gib(remaining_bytes):.2f} GiB，"
-        f"查询 {usage.query_jobs} 次，状态：{status}"
-    )
-    return line, used_percent >= stop_percent
+    return {
+        "schema_version": 1,
+        "query_jobs": usage.query_jobs,
+        "billed_bytes": usage.billed_bytes,
+        "processed_bytes": usage.processed_bytes,
+        "free_tier_bytes": BIGQUERY_MONTHLY_FREE_TIER_BYTES,
+        "remaining_bytes": remaining_bytes,
+        "used_percent": used_percent,
+        "warning_percent": warning_percent,
+        "stop_percent": stop_percent,
+        "status": status,
+        "should_stop": used_percent >= stop_percent,
+    }
 
 
 def _monthly_usage_query(location: str) -> str:
