@@ -4,6 +4,8 @@ All notable changes to Starcat Recommendation Pipeline are documented here.
 
 ## Unreleased
 
+- 新增 Admin Console 受控 SQL Lab CLI、JSON 额度/下载状态和固定生命周期动作；SQL 与结果不持久化到控制台 Job Catalog。
+- 双下载状态批量读取时只查询一次共享 Project 月度额度，避免控制台轮询重复消耗元数据查询。
 - 新增 PushEvent 五字段按日下载 CLI，与 WatchEvent 使用独立 raw 目录、checkpoint 和后台任务。
 - WatchEvent / PushEvent 下载任务定时记录月度 BigQuery Project 用量，并在 80% 警告、90% 自动停止。
 - 新增 WatchEvent 后台下载管理脚本，统一提供启动、停止、重启、状态、日志、防休眠和 T0 挂载保护。
