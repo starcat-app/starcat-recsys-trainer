@@ -25,7 +25,8 @@ usage() {
   ./scripts/$(basename "$SCRIPT_PATH") logs     持续查看日志
 
 start / stop / restart / status 可追加 --json，供本机 Admin Console 的固定
-Action Adapter 消费；JSON 不包含真实数据目录或日志路径。
+Action Adapter 消费；JSON 不包含真实数据目录或日志路径。控制台批量读取状态时，
+可对第二个任务使用 status --json --skip-quota，避免重复发起同一 Project 额度查询。
 
 默认每 ${QUOTA_LOG_INTERVAL_SECONDS} 秒记录一次本月 Project 额度；达到
 ${QUOTA_WARNING_PERCENT}% 警告，达到 ${QUOTA_STOP_PERCENT}% 停止当前下载任务。
@@ -205,6 +206,7 @@ PY
 }
 
 show_status_json() {
+  local skip_quota="${1:-false}"
   local running="false"
   local worker=""
   local monitor=""
@@ -213,18 +215,21 @@ show_status_json() {
   is_running && running="true"
   worker="$(worker_pid || true)"
   monitor="$(monitor_pid || true)"
-  set +e
-  quota_json="$(
-    /usr/bin/env GOOGLE_CLOUD_PROJECT="$BILLING_PROJECT" \
-      "$CLI" bigquery quota-usage \
-      --billing-project "$BILLING_PROJECT" \
-      --location "$LOCATION" \
-      --warning-percent "$QUOTA_WARNING_PERCENT" \
-      --stop-percent "$QUOTA_STOP_PERCENT" \
-      --format json 2>/dev/null
-  )"
-  quota_exit_code=$?
-  set -e
+  quota_exit_code=0
+  if [[ "$skip_quota" != "true" ]]; then
+    set +e
+    quota_json="$(
+      /usr/bin/env GOOGLE_CLOUD_PROJECT="$BILLING_PROJECT" \
+        "$CLI" bigquery quota-usage \
+        --billing-project "$BILLING_PROJECT" \
+        --location "$LOCATION" \
+        --warning-percent "$QUOTA_WARNING_PERCENT" \
+        --stop-percent "$QUOTA_STOP_PERCENT" \
+        --format json 2>/dev/null
+    )"
+    quota_exit_code=$?
+    set -e
+  fi
   [[ -n "$quota_json" ]] || quota_json="null"
 
   "$REPO_ROOT/.venv/bin/python" - \
@@ -423,7 +428,11 @@ bigquery_download_main() {
       ;;
     status)
       if [[ "${2:-}" == "--json" ]]; then
-        show_status_json
+        if [[ "${3:-}" == "--skip-quota" ]]; then
+          show_status_json true
+        else
+          show_status_json false
+        fi
       else
         show_status
       fi
