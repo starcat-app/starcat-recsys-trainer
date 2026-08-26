@@ -24,6 +24,9 @@ usage() {
   ./scripts/$(basename "$SCRIPT_PATH") status   查看进程、checkpoint 和额度
   ./scripts/$(basename "$SCRIPT_PATH") logs     持续查看日志
 
+start / stop / restart / status 可追加 --json，供本机 Admin Console 的固定
+Action Adapter 消费；JSON 不包含真实数据目录或日志路径。
+
 默认每 ${QUOTA_LOG_INTERVAL_SECONDS} 秒记录一次本月 Project 额度；达到
 ${QUOTA_WARNING_PERCENT}% 警告，达到 ${QUOTA_STOP_PERCENT}% 停止当前下载任务。
 EOF
@@ -201,6 +204,122 @@ PY
   quota_check || true
 }
 
+show_status_json() {
+  local running="false"
+  local worker=""
+  local monitor=""
+  local quota_json="null"
+  local quota_exit_code
+  is_running && running="true"
+  worker="$(worker_pid || true)"
+  monitor="$(monitor_pid || true)"
+  set +e
+  quota_json="$(
+    /usr/bin/env GOOGLE_CLOUD_PROJECT="$BILLING_PROJECT" \
+      "$CLI" bigquery quota-usage \
+      --billing-project "$BILLING_PROJECT" \
+      --location "$LOCATION" \
+      --warning-percent "$QUOTA_WARNING_PERCENT" \
+      --stop-percent "$QUOTA_STOP_PERCENT" \
+      --format json 2>/dev/null
+  )"
+  quota_exit_code=$?
+  set -e
+  [[ -n "$quota_json" ]] || quota_json="null"
+
+  "$REPO_ROOT/.venv/bin/python" - \
+    "$STATE_FILE" "$EVENT_LABEL" "$COMMAND_NAME" "$running" "$SESSION_NAME" \
+    "$worker" "$monitor" "$START_DATE" "$END_DATE" "$quota_json" \
+    "$quota_exit_code" <<'PY'
+import json
+import sys
+from datetime import date
+from pathlib import Path
+
+(
+    state_name,
+    event_label,
+    command_name,
+    running_text,
+    session_name,
+    worker_pid,
+    monitor_pid,
+    start_date,
+    end_date,
+    quota_text,
+    quota_exit_code,
+) = sys.argv[1:]
+checkpoint_error = None
+partitions = {}
+estimated_total_bytes = 0
+state_path = Path(state_name)
+if state_path.is_file():
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        partitions = state.get("completed_partitions", {})
+        if not isinstance(partitions, dict):
+            raise ValueError("completed_partitions 不是对象")
+        estimated_total_bytes = int(state.get("estimated_total_bytes", 0))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
+        checkpoint_error = type(error).__name__
+        partitions = {}
+try:
+    quota = json.loads(quota_text)
+except json.JSONDecodeError:
+    quota = None
+start = date.fromisoformat(start_date)
+end = date.fromisoformat(end_date)
+document = {
+    "schema_version": 1,
+    "event": event_label,
+    "command": command_name,
+    "state": "running" if running_text == "true" else "stopped",
+    "screen_session": session_name,
+    "worker_pid": int(worker_pid) if worker_pid else None,
+    "quota_monitor_pid": int(monitor_pid) if monitor_pid else None,
+    "start_date": start_date,
+    "end_date": end_date,
+    "total_partitions": (end - start).days + 1,
+    "completed_partitions": len(partitions),
+    "last_partition": max(partitions) if partitions else None,
+    "estimated_total_bytes": estimated_total_bytes,
+    "checkpoint_error": checkpoint_error,
+    "quota": quota,
+    "quota_error": None if int(quota_exit_code) in {0, 3} else "QUOTA_QUERY_FAILED",
+}
+print(json.dumps(document, ensure_ascii=False, separators=(",", ":")))
+PY
+}
+
+run_action_json() {
+  local action="$1"
+  local callback="$2"
+  local exit_code
+  set +e
+  "$callback" >/dev/null 2>&1
+  exit_code=$?
+  set -e
+  local state="stopped"
+  is_running && state="running"
+  "$REPO_ROOT/.venv/bin/python" - "$action" "$EVENT_LABEL" "$state" "$exit_code" <<'PY'
+import json
+import sys
+
+action, event_label, state, exit_code = sys.argv[1:]
+code = int(exit_code)
+print(json.dumps({
+    "schema_version": 1,
+    "action": action,
+    "event": event_label,
+    "ok": code == 0,
+    "state": state,
+    "exit_code": code,
+    "error_code": None if code == 0 else "DOWNLOAD_ACTION_FAILED",
+}, ensure_ascii=False, separators=(",", ":")))
+raise SystemExit(code)
+PY
+}
+
 follow_logs() {
   require_external_mount
   /usr/bin/touch "$LOG_FILE"
@@ -274,15 +393,41 @@ run_worker() {
   exit "$exit_code"
 }
 
+restart_download() {
+  stop_download
+  start_download
+}
+
 bigquery_download_main() {
   case "${1:-}" in
-    start) start_download ;;
-    stop) stop_download ;;
-    restart)
-      stop_download
-      start_download
+    start)
+      if [[ "${2:-}" == "--json" ]]; then
+        run_action_json "start" start_download
+      else
+        start_download
+      fi
       ;;
-    status) show_status ;;
+    stop)
+      if [[ "${2:-}" == "--json" ]]; then
+        run_action_json "stop" stop_download
+      else
+        stop_download
+      fi
+      ;;
+    restart)
+      if [[ "${2:-}" == "--json" ]]; then
+        run_action_json "restart" restart_download
+      else
+        restart_download
+      fi
+      ;;
+    status)
+      if [[ "${2:-}" == "--json" ]]; then
+        show_status_json
+      else
+        show_status
+      fi
+      ;;
     logs) follow_logs ;;
     _run) run_worker ;;
     _quota_monitor) run_quota_monitor "${2:-}" ;;
