@@ -7,6 +7,7 @@ from pathlib import Path
 import pyarrow as pa
 import pytest
 from google.api_core import exceptions as google_exceptions
+from requests import exceptions as requests_exceptions
 
 from starcat_recsys.interfaces import TaskContext
 from starcat_recsys.sources.bigquery import (
@@ -57,6 +58,20 @@ class FlakyGateway(FakeGateway):
         self.attempts += 1
         if self.attempts == 1:
             raise google_exceptions.ServiceUnavailable("temporary")
+        return super().fetch_watch_events(table_suffix, maximum_bytes_billed)
+
+
+class FlakyTransportGateway(FakeGateway):
+    """模拟 BigQuery 分页结果下载期间发生一次 TLS EOF。"""
+
+    def __init__(self, estimates: dict[str, int]) -> None:
+        super().__init__(estimates)
+        self.attempts = 0
+
+    def fetch_watch_events(self, table_suffix: str, maximum_bytes_billed: int) -> pa.Table:
+        self.attempts += 1
+        if self.attempts == 1:
+            raise requests_exceptions.SSLError("temporary TLS EOF")
         return super().fetch_watch_events(table_suffix, maximum_bytes_billed)
 
 
@@ -160,6 +175,26 @@ def test_checkpoint_survives_later_partition_failure(tmp_path: Path) -> None:
 
 def test_retries_transient_google_error(tmp_path: Path) -> None:
     gateway = FlakyGateway({"20260822": 100})
+    source = BigQueryWatchEventSource(
+        BigQueryConfig(
+            billing_project="starcat-test",
+            start_date=date(2026, 8, 22),
+            end_date=date(2026, 8, 22),
+            maximum_bytes_billed_per_day=1000,
+            retry_attempts=2,
+            retry_initial_delay_seconds=0,
+        ),
+        gateway,
+    )
+
+    source.collect(make_context(tmp_path))
+
+    assert gateway.attempts == 2
+    assert gateway.fetches == [("20260822", 1000)]
+
+
+def test_retries_transient_transport_error(tmp_path: Path) -> None:
+    gateway = FlakyTransportGateway({"20260822": 100})
     source = BigQueryWatchEventSource(
         BigQueryConfig(
             billing_project="starcat-test",

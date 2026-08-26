@@ -22,6 +22,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from google.api_core import exceptions as google_exceptions
 from google.cloud import bigquery
+from requests import exceptions as requests_exceptions
 
 from starcat_recsys.artifacts import artifact_for, sha256_file, write_json_atomic
 from starcat_recsys.interfaces import Artifact, TaskContext
@@ -30,13 +31,17 @@ LOGGER = logging.getLogger(__name__)
 
 _EXPECTED_COLUMNS = ("source_record_id", "actor_id", "repo_id", "created_at")
 _T = TypeVar("_T")
-_RETRYABLE_GOOGLE_ERRORS = (
+_RETRYABLE_ERRORS = (
     google_exceptions.TooManyRequests,
     google_exceptions.InternalServerError,
     google_exceptions.BadGateway,
     google_exceptions.ServiceUnavailable,
     google_exceptions.GatewayTimeout,
     google_exceptions.DeadlineExceeded,
+    # BigQuery 查询任务已经完成后，分页拉取结果仍可能遇到短暂 TLS EOF、连接重置
+    # 或读取超时。这些错误不代表查询参数或权限有问题，应沿用同一有界退避策略。
+    requests_exceptions.ConnectionError,
+    requests_exceptions.Timeout,
 )
 
 GH_ARCHIVE_QUERY_TEMPLATE = """
@@ -274,7 +279,7 @@ class BigQueryWatchEventSource:
         for attempt in range(1, self._config.retry_attempts + 1):
             try:
                 return callback()
-            except _RETRYABLE_GOOGLE_ERRORS as error:
+            except _RETRYABLE_ERRORS as error:
                 if attempt == self._config.retry_attempts:
                     raise
                 delay = self._config.retry_initial_delay_seconds * (2 ** (attempt - 1))
