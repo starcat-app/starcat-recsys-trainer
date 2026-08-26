@@ -46,17 +46,12 @@ Registry 版本不可覆盖。重跑时同时修改 YAML 中的 `run_id` 和 `pu
 十年级 WatchEvent 首次采集应使用可恢复的独立下载命令，避免完整训练管道中断后重复消耗 BigQuery 额度：
 
 ```bash
-uv run starcat-recsys bigquery download-watch-events \
-  --workspace /Volumes/T0/Starcat/bigquery/watch-events-2016-2026 \
-  --billing-project YOUR_GCP_PROJECT_ID \
-  --start-date 2016-01-01 \
-  --end-date 2026-08-25 \
-  --maximum-bytes-billed-per-day 1073741824 \
-  --maximum-total-bytes-billed 600000000000 \
-  --run-id gharchive-watch-2016-2026
+./scripts/download-watch-events.sh start
+./scripts/download-watch-events.sh status
+./scripts/download-watch-events.sh logs
 ```
 
-同一命令可以安全重跑；已通过 Parquet footer 和 SHA-256 校验的日期不会再次查询。
+脚本通过 `screen + caffeinate` 在后台运行并阻止 macOS 自动休眠，不依赖 `launchd`。停止或重启使用 `stop` / `restart`。脚本只允许在 `/Volumes/T0` 已真实挂载时启动，避免移动硬盘掉线后误写本机磁盘。默认使用当前十年任务参数；其他机器可通过 `STARCAT_BQ_BILLING_PROJECT`、`STARCAT_WATCH_WORKSPACE` 等环境变量覆盖。相同任务可安全续传，已通过 Parquet footer 和 SHA-256 校验的日期不会再次查询。
 
 ## 管道结构
 
