@@ -29,7 +29,7 @@ from starcat_recsys.interfaces import Artifact, TaskContext
 
 LOGGER = logging.getLogger(__name__)
 
-_EXPECTED_COLUMNS = ("source_record_id", "actor_id", "repo_id", "created_at")
+_WATCH_EVENT_COLUMNS = ("source_record_id", "actor_id", "repo_id", "created_at")
 _T = TypeVar("_T")
 _RETRYABLE_ERRORS = (
     google_exceptions.TooManyRequests,
@@ -59,7 +59,7 @@ WHERE type = 'WatchEvent'
 
 @dataclass(frozen=True, slots=True)
 class BigQueryConfig:
-    """一次有明确预算和日期范围的 GH Archive 采集配置。"""
+    """一次有明确预算和日期范围的 GH Archive 日事件采集配置。"""
 
     billing_project: str
     start_date: date
@@ -85,12 +85,12 @@ class BigQueryConfig:
             raise ValueError("retry_initial_delay_seconds 不能小于 0")
 
 
-class BigQueryGateway(Protocol):
-    """隔离 Google SDK，单测可以证明预算门禁而不访问网络。"""
+class BigQueryDailyEventGateway(Protocol):
+    """隔离 Google SDK，单测可以证明按日采集和预算门禁而不访问网络。"""
 
     def estimate_bytes(self, table_suffix: str) -> int: ...
 
-    def fetch_watch_events(self, table_suffix: str, maximum_bytes_billed: int) -> pa.Table: ...
+    def fetch_events(self, table_suffix: str, maximum_bytes_billed: int) -> pa.Table: ...
 
 
 class GoogleBigQueryGateway:
@@ -106,7 +106,7 @@ class GoogleBigQueryGateway:
         job = self._client.query(query, job_config=job_config)
         return int(job.total_bytes_processed or 0)
 
-    def fetch_watch_events(self, table_suffix: str, maximum_bytes_billed: int) -> pa.Table:
+    def fetch_events(self, table_suffix: str, maximum_bytes_billed: int) -> pa.Table:
         query = _gh_archive_query(table_suffix)
         job_config = self._job_config(
             dry_run=False,
@@ -133,21 +133,27 @@ class GoogleBigQueryGateway:
         return job_config
 
 
-class BigQueryWatchEventSource:
-    """把 GH Archive WatchEvent 分区写入可断点续传的 raw Parquet。"""
+class BigQueryDailyEventSource:
+    """按模板方法把一种 GH Archive 日事件写入可断点续传的 raw Parquet。"""
 
-    name = "gharchive_bigquery"
+    name = ""
+    event_label = ""
+    output_directory_name = ""
+    file_prefix = ""
+    artifact_kind = ""
+    metadata_source = ""
+    expected_columns: tuple[str, ...] = ()
 
     def __init__(
         self,
         config: BigQueryConfig,
-        gateway: BigQueryGateway | None = None,
+        gateway: BigQueryDailyEventGateway,
     ) -> None:
         self._config = config
-        self._gateway = gateway or GoogleBigQueryGateway(config)
+        self._gateway = gateway
 
     def collect(self, context: TaskContext) -> list[Artifact]:
-        output_directory = context.workspace / "raw" / "gh_archive"
+        output_directory = context.workspace / "raw" / self.output_directory_name
         output_directory.mkdir(parents=True, exist_ok=True)
         state_path = output_directory / "download-state.json"
         state_scope = self._state_scope(context)
@@ -159,9 +165,14 @@ class BigQueryWatchEventSource:
 
         for index, current_date in enumerate(dates, start=1):
             suffix = current_date.strftime("%Y%m%d")
-            path = output_directory / f"watch-events-{suffix}.parquet"
+            path = output_directory / f"{self.file_prefix}-{suffix}.parquet"
             saved = completed.get(suffix)
-            if saved is not None and _partition_matches_state(path, saved):
+            if saved is not None and _partition_matches_state(
+                path,
+                saved,
+                self.expected_columns,
+                self.event_label,
+            ):
                 artifact = _artifact_from_state(path, saved)
                 estimated_total_bytes += int(artifact.metadata["estimated_bytes"])
                 self._enforce_total_budget(estimated_total_bytes)
@@ -179,18 +190,19 @@ class BigQueryWatchEventSource:
             if is_missing_partition:
                 # GH Archive 历史数据存在少量缺失日表。空 Parquet 仍作为已完成分区进入
                 # checkpoint，避免每次恢复时重复请求同一个确定不存在的历史日期。
-                table = _empty_watch_event_table()
+                table = self._empty_table()
                 _write_parquet_atomic(table, path)
                 artifact = artifact_for(
                     path,
-                    "raw_interactions",
-                    _partition_metadata(suffix, 0, 0),
+                    self.artifact_kind,
+                    _partition_metadata(suffix, 0, 0, self.metadata_source),
                 )
                 LOGGER.warning(
-                    "[%s/%s] GH Archive 日表 %s 不存在，已记录为空分区",
+                    "[%s/%s] GH Archive 日表 %s 不存在，已记录为空 %s 分区",
                     index,
                     len(dates),
                     suffix,
+                    self.event_label,
                 )
             else:
                 if estimated_bytes > self._config.maximum_bytes_billed_per_day:
@@ -202,36 +214,55 @@ class BigQueryWatchEventSource:
 
                 # 文件成功替换、checkpoint 尚未来得及写入时，下次运行可以收养这个孤立分区；
                 # 若已有 checkpoint 却校验失败，则必须重新查询，不能把被篡改文件重新登记为正确产物。
-                if saved is None and _partition_is_readable(path):
+                if saved is None and _partition_is_readable(
+                    path,
+                    self.expected_columns,
+                    self.event_label,
+                ):
                     row_count = pq.read_metadata(path).num_rows
                     artifact = artifact_for(
                         path,
-                        "raw_interactions",
-                        _partition_metadata(suffix, row_count, estimated_bytes),
+                        self.artifact_kind,
+                        _partition_metadata(
+                            suffix,
+                            row_count,
+                            estimated_bytes,
+                            self.metadata_source,
+                        ),
                     )
                     LOGGER.info("[%s/%s] 已收养完整分区 %s", index, len(dates), suffix)
                 else:
                     table = self._with_retry(
                         f"download {suffix}",
                         partial(
-                            self._gateway.fetch_watch_events,
+                            self._gateway.fetch_events,
                             suffix,
                             self._config.maximum_bytes_billed_per_day,
                         ),
                     )
                     if not isinstance(table, pa.Table):
                         raise TypeError("BigQuery Gateway 必须返回 pyarrow.Table")
-                    _validate_table_columns(table.column_names)
+                    _validate_table_columns(
+                        table.column_names,
+                        self.expected_columns,
+                        self.event_label,
+                    )
                     _write_parquet_atomic(table, path)
                     artifact = artifact_for(
                         path,
-                        "raw_interactions",
-                        _partition_metadata(suffix, table.num_rows, estimated_bytes),
+                        self.artifact_kind,
+                        _partition_metadata(
+                            suffix,
+                            table.num_rows,
+                            estimated_bytes,
+                            self.metadata_source,
+                        ),
                     )
                     LOGGER.info(
-                        "[%s/%s] 已下载分区 %s：%s 行，扫描 %s 字节",
+                        "[%s/%s] 已下载 %s 分区 %s：%s 行，扫描 %s 字节",
                         index,
                         len(dates),
+                        self.event_label,
                         suffix,
                         table.num_rows,
                         estimated_bytes,
@@ -281,7 +312,7 @@ class BigQueryWatchEventSource:
         maximum = self._config.maximum_total_bytes_billed
         if maximum is not None and estimated_total_bytes > maximum:
             raise RuntimeError(
-                f"BigQuery WatchEvent 累计预计扫描 {estimated_total_bytes} 字节，"
+                f"BigQuery {self.event_label} 累计预计扫描 {estimated_total_bytes} 字节，"
                 f"超过总上限 {maximum}"
             )
 
@@ -302,6 +333,9 @@ class BigQueryWatchEventSource:
                 raise
             return 0, True
         return estimated_bytes, False
+
+    def _empty_table(self) -> pa.Table:
+        raise NotImplementedError
 
     def _with_retry(self, operation: str, callback: Callable[[], _T]) -> _T:
         """只重试 Google 明确标识的瞬时错误，权限和预算错误立即暴露。"""
@@ -325,9 +359,36 @@ class BigQueryWatchEventSource:
         raise AssertionError("retry loop 不应运行到这里")
 
 
-def _partition_metadata(suffix: str, row_count: int, estimated_bytes: int) -> dict[str, Any]:
+class BigQueryWatchEventSource(BigQueryDailyEventSource):
+    """把 GH Archive WatchEvent 分区写入可断点续传的 raw Parquet。"""
+
+    name = "gharchive_bigquery"
+    event_label = "WatchEvent"
+    output_directory_name = "gh_archive"
+    file_prefix = "watch-events"
+    artifact_kind = "raw_interactions"
+    metadata_source = "gh_archive"
+    expected_columns = _WATCH_EVENT_COLUMNS
+
+    def __init__(
+        self,
+        config: BigQueryConfig,
+        gateway: BigQueryDailyEventGateway | None = None,
+    ) -> None:
+        super().__init__(config, gateway or GoogleBigQueryGateway(config))
+
+    def _empty_table(self) -> pa.Table:
+        return _empty_watch_event_table()
+
+
+def _partition_metadata(
+    suffix: str,
+    row_count: int,
+    estimated_bytes: int,
+    source: str,
+) -> dict[str, Any]:
     return {
-        "source": "gh_archive",
+        "source": source,
         "partition": suffix,
         "row_count": row_count,
         "estimated_bytes": estimated_bytes,
@@ -395,29 +456,46 @@ def _artifact_from_state(path: Path, saved: dict[str, Any]) -> Artifact:
     return Artifact(kind=kind, uri=path.resolve().as_uri(), checksum=checksum, metadata=metadata)
 
 
-def _partition_matches_state(path: Path, saved: dict[str, Any]) -> bool:
+def _partition_matches_state(
+    path: Path,
+    saved: dict[str, Any],
+    expected_columns: tuple[str, ...],
+    event_label: str,
+) -> bool:
     checksum = saved.get("checksum")
-    if not isinstance(checksum, str) or not _partition_is_readable(path):
+    if not isinstance(checksum, str) or not _partition_is_readable(
+        path,
+        expected_columns,
+        event_label,
+    ):
         return False
     return sha256_file(path) == checksum
 
 
-def _partition_is_readable(path: Path) -> bool:
+def _partition_is_readable(
+    path: Path,
+    expected_columns: tuple[str, ...],
+    event_label: str,
+) -> bool:
     if not path.is_file():
         return False
     try:
         schema = pq.read_schema(path)
-        _validate_table_columns(schema.names)
+        _validate_table_columns(schema.names, expected_columns, event_label)
         pq.read_metadata(path)
     except (OSError, pa.ArrowException, ValueError):
         return False
     return True
 
 
-def _validate_table_columns(columns: list[str]) -> None:
-    if tuple(columns) != _EXPECTED_COLUMNS:
+def _validate_table_columns(
+    columns: list[str],
+    expected_columns: tuple[str, ...],
+    event_label: str,
+) -> None:
+    if tuple(columns) != expected_columns:
         raise ValueError(
-            f"WatchEvent Parquet 字段不匹配：期望 {_EXPECTED_COLUMNS}，实际 {tuple(columns)}"
+            f"{event_label} Parquet 字段不匹配：期望 {expected_columns}，实际 {tuple(columns)}"
         )
 
 

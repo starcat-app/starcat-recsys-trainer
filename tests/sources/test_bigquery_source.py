@@ -29,7 +29,7 @@ class FakeGateway:
         self.estimate_calls.append(table_suffix)
         return self.estimates[table_suffix]
 
-    def fetch_watch_events(self, table_suffix: str, maximum_bytes_billed: int) -> pa.Table:
+    def fetch_events(self, table_suffix: str, maximum_bytes_billed: int) -> pa.Table:
         self.fetches.append((table_suffix, maximum_bytes_billed))
         return pa.table(
             {
@@ -44,10 +44,10 @@ class FakeGateway:
 
 
 class FailingSecondGateway(FakeGateway):
-    def fetch_watch_events(self, table_suffix: str, maximum_bytes_billed: int) -> pa.Table:
+    def fetch_events(self, table_suffix: str, maximum_bytes_billed: int) -> pa.Table:
         if table_suffix == "20260823":
             raise RuntimeError("simulated interruption")
-        return super().fetch_watch_events(table_suffix, maximum_bytes_billed)
+        return super().fetch_events(table_suffix, maximum_bytes_billed)
 
 
 class FlakyGateway(FakeGateway):
@@ -55,11 +55,11 @@ class FlakyGateway(FakeGateway):
         super().__init__(estimates)
         self.attempts = 0
 
-    def fetch_watch_events(self, table_suffix: str, maximum_bytes_billed: int) -> pa.Table:
+    def fetch_events(self, table_suffix: str, maximum_bytes_billed: int) -> pa.Table:
         self.attempts += 1
         if self.attempts == 1:
             raise google_exceptions.ServiceUnavailable("temporary")
-        return super().fetch_watch_events(table_suffix, maximum_bytes_billed)
+        return super().fetch_events(table_suffix, maximum_bytes_billed)
 
 
 class FlakyTransportGateway(FakeGateway):
@@ -69,11 +69,11 @@ class FlakyTransportGateway(FakeGateway):
         super().__init__(estimates)
         self.attempts = 0
 
-    def fetch_watch_events(self, table_suffix: str, maximum_bytes_billed: int) -> pa.Table:
+    def fetch_events(self, table_suffix: str, maximum_bytes_billed: int) -> pa.Table:
         self.attempts += 1
         if self.attempts == 1:
             raise requests_exceptions.SSLError("temporary TLS EOF")
-        return super().fetch_watch_events(table_suffix, maximum_bytes_billed)
+        return super().fetch_events(table_suffix, maximum_bytes_billed)
 
 
 class MissingDayGateway(FakeGateway):

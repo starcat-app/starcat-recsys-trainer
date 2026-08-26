@@ -3,6 +3,7 @@
 from starcat_recsys.sources.bigquery import BigQueryConfig, BigQueryWatchEventSource
 from starcat_recsys.sources.bigquery_push import (
     BigQueryPushEventMetadataSource,
+    BigQueryPushEventSource,
     BigQueryPushMetadataConfig,
 )
 from starcat_recsys.sources.starcat_collection import (
@@ -13,6 +14,7 @@ from starcat_recsys.sources.starcat_collection import (
 __all__ = [
     "BigQueryConfig",
     "BigQueryPushEventMetadataSource",
+    "BigQueryPushEventSource",
     "BigQueryPushMetadataConfig",
     "BigQueryWatchEventSource",
     "StarcatCollectionAPISource",

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
 import pyarrow as pa
@@ -16,6 +17,27 @@ from google.cloud import bigquery
 
 from starcat_recsys.artifacts import artifact_for, write_json_atomic
 from starcat_recsys.interfaces import Artifact, TaskContext
+from starcat_recsys.sources.bigquery import (
+    BigQueryConfig,
+    BigQueryDailyEventGateway,
+    BigQueryDailyEventSource,
+)
+
+PUSH_EVENT_COLUMNS = ("source_record_id", "actor_id", "repo_id", "full_name", "created_at")
+
+PUSH_EVENT_QUERY_TEMPLATE = """
+SELECT
+  CAST(id AS STRING) AS source_record_id,
+  CAST(actor.id AS STRING) AS actor_id,
+  CAST(repo.id AS INT64) AS repo_id,
+  repo.name AS full_name,
+  created_at
+FROM `githubarchive.day.{table_suffix}`
+WHERE type = 'PushEvent'
+  AND actor.id IS NOT NULL
+  AND repo.id IS NOT NULL
+  AND repo.name IS NOT NULL
+""".strip()
 
 PUSH_METADATA_QUERY_TEMPLATE = """
 WITH push_events AS (
@@ -186,6 +208,73 @@ class BigQueryPushEventMetadataSource:
         return [artifact]
 
 
+class GoogleBigQueryPushEventGateway:
+    """使用显式 GH Archive 日表下载精简 PushEvent。"""
+
+    def __init__(self, config: BigQueryConfig) -> None:
+        self._config = config
+        self._client = bigquery.Client(project=config.billing_project, location=config.location)
+
+    def estimate_bytes(self, table_suffix: str) -> int:
+        job = self._client.query(
+            _push_event_query(table_suffix),
+            job_config=self._job_config(dry_run=True),
+        )
+        return int(job.total_bytes_processed or 0)
+
+    def fetch_events(self, table_suffix: str, maximum_bytes_billed: int) -> pa.Table:
+        result = self._client.query(
+            _push_event_query(table_suffix),
+            job_config=self._job_config(
+                dry_run=False,
+                maximum_bytes_billed=maximum_bytes_billed,
+            ),
+        ).result()
+        # 与 WatchEvent 保持相同权限边界，不启用额外的 BigQuery Storage API。
+        return result.to_arrow(create_bqstorage_client=False)
+
+    @staticmethod
+    def _job_config(
+        *,
+        dry_run: bool,
+        maximum_bytes_billed: int | None = None,
+    ) -> bigquery.QueryJobConfig:
+        job_config = bigquery.QueryJobConfig(dry_run=dry_run, use_query_cache=False)
+        if maximum_bytes_billed is not None:
+            job_config.maximum_bytes_billed = maximum_bytes_billed
+        return job_config
+
+
+class BigQueryPushEventSource(BigQueryDailyEventSource):
+    """把精简 PushEvent 按 UTC 日写入独立、可恢复的 raw Parquet。"""
+
+    name = "gharchive_bigquery_push_events"
+    event_label = "PushEvent"
+    output_directory_name = "gh_archive_push_events"
+    file_prefix = "push-events"
+    artifact_kind = "raw_push_events"
+    metadata_source = "gh_archive_push_events"
+    expected_columns = PUSH_EVENT_COLUMNS
+
+    def __init__(
+        self,
+        config: BigQueryConfig,
+        gateway: BigQueryDailyEventGateway | None = None,
+    ) -> None:
+        super().__init__(config, gateway or GoogleBigQueryPushEventGateway(config))
+
+    def _empty_table(self) -> pa.Table:
+        return pa.table(
+            {
+                "source_record_id": pa.array([], type=pa.string()),
+                "actor_id": pa.array([], type=pa.string()),
+                "repo_id": pa.array([], type=pa.int64()),
+                "full_name": pa.array([], type=pa.string()),
+                "created_at": pa.array([], type=pa.timestamp("us", tz="UTC")),
+            }
+        )
+
+
 def _push_metadata_query(start_year: int, end_year: int, minimum_push_events: int) -> str:
     """生成只扫描给定四位年份后缀的 GH Archive 聚合查询。"""
 
@@ -201,3 +290,15 @@ def _push_metadata_query(start_year: int, end_year: int, minimum_push_events: in
         end_year=config.end_year,
         minimum_push_events=config.minimum_push_events,
     )
+
+
+def _push_event_query(table_suffix: str) -> str:
+    """构造一个经过严格日期校验的 GH Archive PushEvent 日表查询。"""
+
+    if len(table_suffix) != 8 or not table_suffix.isascii() or not table_suffix.isdigit():
+        raise ValueError("GH Archive 表后缀必须是有效的 YYYYMMDD 日期")
+    try:
+        datetime.strptime(table_suffix, "%Y%m%d")
+    except ValueError as error:
+        raise ValueError("GH Archive 表后缀必须是有效的 YYYYMMDD 日期") from error
+    return PUSH_EVENT_QUERY_TEMPLATE.format(table_suffix=table_suffix)
