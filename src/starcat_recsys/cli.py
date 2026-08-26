@@ -9,10 +9,31 @@ import logging
 from datetime import date
 from pathlib import Path
 
+from starcat_recsys.bigquery_quota import (
+    QUOTA_STOP_EXIT_CODE,
+    format_quota_usage,
+    read_bigquery_quota,
+)
 from starcat_recsys.bundle import LocalModelRegistry, query_bundle, verify_bundle
 from starcat_recsys.interfaces import TaskContext
 from starcat_recsys.pipeline import run_pipeline
 from starcat_recsys.sources.bigquery import BigQueryConfig, BigQueryWatchEventSource
+from starcat_recsys.sources.bigquery_push import BigQueryPushEventSource
+
+
+def _add_daily_download_arguments(parser: argparse.ArgumentParser) -> None:
+    """为 WatchEvent 与 PushEvent 下载命令维护同一组预算和恢复参数。"""
+
+    parser.add_argument("--workspace", type=Path, required=True)
+    parser.add_argument("--billing-project", required=True)
+    parser.add_argument("--start-date", type=date.fromisoformat, required=True)
+    parser.add_argument("--end-date", type=date.fromisoformat, required=True)
+    parser.add_argument("--maximum-bytes-billed-per-day", type=int, required=True)
+    parser.add_argument("--maximum-total-bytes-billed", type=int, required=True)
+    parser.add_argument("--location", default="US")
+    parser.add_argument("--retry-attempts", type=int, default=5)
+    parser.add_argument("--retry-initial-delay-seconds", type=float, default=1.0)
+    parser.add_argument("--run-id", required=True)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -31,16 +52,20 @@ def build_parser() -> argparse.ArgumentParser:
         "download-watch-events",
         help="按 UTC 日分区下载 WatchEvent，支持断点续传",
     )
-    download_watch.add_argument("--workspace", type=Path, required=True)
-    download_watch.add_argument("--billing-project", required=True)
-    download_watch.add_argument("--start-date", type=date.fromisoformat, required=True)
-    download_watch.add_argument("--end-date", type=date.fromisoformat, required=True)
-    download_watch.add_argument("--maximum-bytes-billed-per-day", type=int, required=True)
-    download_watch.add_argument("--maximum-total-bytes-billed", type=int, required=True)
-    download_watch.add_argument("--location", default="US")
-    download_watch.add_argument("--retry-attempts", type=int, default=5)
-    download_watch.add_argument("--retry-initial-delay-seconds", type=float, default=1.0)
-    download_watch.add_argument("--run-id", required=True)
+    _add_daily_download_arguments(download_watch)
+    download_push = bigquery_commands.add_parser(
+        "download-push-events",
+        help="按 UTC 日分区下载精简 PushEvent，支持断点续传",
+    )
+    _add_daily_download_arguments(download_push)
+    quota_usage = bigquery_commands.add_parser(
+        "quota-usage",
+        help="输出当前 Project 本月 BigQuery 查询计费额度",
+    )
+    quota_usage.add_argument("--billing-project", required=True)
+    quota_usage.add_argument("--location", default="US")
+    quota_usage.add_argument("--warning-percent", type=float, default=80)
+    quota_usage.add_argument("--stop-percent", type=float, default=90)
 
     bundle = commands.add_parser("bundle", help="校验或查询 ServingBundle")
     bundle_commands = bundle.add_subparsers(dest="bundle_command", required=True)
@@ -90,7 +115,10 @@ def main(argv: list[str] | None = None) -> int:
     elif arguments.command == "registry" and arguments.registry_command == "activate":
         LocalModelRegistry(arguments.path).activate(arguments.version)
         print(json.dumps({"active": arguments.version}, ensure_ascii=False))
-    elif arguments.command == "bigquery" and arguments.bigquery_command == "download-watch-events":
+    elif arguments.command == "bigquery" and arguments.bigquery_command in {
+        "download-watch-events",
+        "download-push-events",
+    }:
         config_document = {
             "billing_project": arguments.billing_project,
             "start_date": arguments.start_date.isoformat(),
@@ -105,7 +133,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         workspace = arguments.workspace.resolve()
         workspace.mkdir(parents=True, exist_ok=True)
-        artifacts = BigQueryWatchEventSource(
+        source_type = (
+            BigQueryWatchEventSource
+            if arguments.bigquery_command == "download-watch-events"
+            else BigQueryPushEventSource
+        )
+        artifacts = source_type(
             BigQueryConfig(
                 billing_project=arguments.billing_project,
                 start_date=arguments.start_date,
@@ -138,6 +171,15 @@ def main(argv: list[str] | None = None) -> int:
                 indent=2,
             )
         )
+    elif arguments.command == "bigquery" and arguments.bigquery_command == "quota-usage":
+        usage = read_bigquery_quota(arguments.billing_project, arguments.location)
+        line, should_stop = format_quota_usage(
+            usage,
+            warning_percent=arguments.warning_percent,
+            stop_percent=arguments.stop_percent,
+        )
+        print(line)
+        return QUOTA_STOP_EXIT_CODE if should_stop else 0
     return 0
 
 

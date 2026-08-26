@@ -321,6 +321,61 @@ def test_download_watch_events_cli_reports_summary(
     assert captured[0][1].run_id == "watch-test"
 
 
+def test_download_push_events_cli_uses_independent_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: object
+) -> None:
+    captured: list[tuple[BigQueryConfig, TaskContext]] = []
+    raw = tmp_path / "push.parquet"
+    raw.write_bytes(b"fixture")
+
+    class FakePushSource:
+        def __init__(self, config: BigQueryConfig) -> None:
+            self.config = config
+
+        def collect(self, context: TaskContext) -> list[Artifact]:
+            captured.append((self.config, context))
+            return [
+                Artifact(
+                    kind="raw_push_events",
+                    uri=raw.resolve().as_uri(),
+                    checksum="sha256:push",
+                    metadata={"row_count": 321, "estimated_bytes": 654},
+                )
+            ]
+
+    monkeypatch.setattr("starcat_recsys.cli.BigQueryPushEventSource", FakePushSource)
+
+    assert (
+        main(
+            [
+                "bigquery",
+                "download-push-events",
+                "--workspace",
+                (tmp_path / "push-download").as_posix(),
+                "--billing-project",
+                "starcat-test",
+                "--start-date",
+                "2026-08-22",
+                "--end-date",
+                "2026-08-23",
+                "--maximum-bytes-billed-per-day",
+                "1000",
+                "--maximum-total-bytes-billed",
+                "2000",
+                "--run-id",
+                "push-test",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)  # type: ignore[attr-defined]
+    assert output["partition_count"] == 1
+    assert output["row_count"] == 321
+    assert captured[0][0].maximum_total_bytes_billed == 2_000
+    assert captured[0][1].run_id == "push-test"
+
+
 def test_rejects_training_reference_time_different_from_train_end() -> None:
     with pytest.raises(ValueError, match="reference_time"):
         _training_reference_time(

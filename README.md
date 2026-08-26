@@ -7,6 +7,7 @@
 ## 已实现能力
 
 - GH Archive BigQuery `WatchEvent` 使用显式 UTC 日表采集，支持断点续传、原子 checkpoint、瞬时错误重试、分区与总扫描预算门禁。
+- GH Archive BigQuery `PushEvent` 使用独立显式 UTC 日表下载精简原始事件，只保留事件 ID、actor ID、repo ID、仓库名和事件时间。
 - GH Archive BigQuery `PushEvent` 跨年份聚合仓库基础目录，提供最新名称、首次/末次 Push 和事件数，并使用独立总预算门禁。
 - GitHub Repository REST metadata 采集，支持 ETag cache、请求上限和限流识别。
 - Starcat schema v1 匿名完整 Star 快照校验、HMAC 脱敏和导入。
@@ -43,21 +44,25 @@ uv run starcat-recsys bundle query \
 
 Registry 版本不可覆盖。重跑时同时修改 YAML 中的 `run_id` 和 `publish.model_version`。
 
-十年级 WatchEvent 首次采集应使用可恢复的独立下载命令，避免完整训练管道中断后重复消耗 BigQuery 额度：
+十年级 WatchEvent 与 PushEvent 首次采集使用两个可独立运行、独立续传的下载任务：
 
 ```bash
 ./scripts/download-watch-events.sh start
 ./scripts/download-watch-events.sh status
 ./scripts/download-watch-events.sh logs
+
+./scripts/download-push-events.sh start
+./scripts/download-push-events.sh status
+./scripts/download-push-events.sh logs
 ```
 
-脚本通过 `screen + caffeinate` 在后台运行并阻止 macOS 自动休眠，不依赖 `launchd`。停止或重启使用 `stop` / `restart`。脚本只允许在 `/Volumes/T0` 已真实挂载时启动，避免移动硬盘掉线后误写本机磁盘。默认使用当前十年任务参数；其他机器可通过 `STARCAT_BQ_BILLING_PROJECT`、`STARCAT_WATCH_WORKSPACE` 等环境变量覆盖。相同任务可安全续传，已通过 Parquet footer 和 SHA-256 校验的日期不会再次查询。
+脚本通过 `screen + caffeinate` 在后台运行并阻止 macOS 自动休眠，不依赖 `launchd`。停止或重启使用 `stop` / `restart`。两个任务分别使用 `/Volumes/T0/Starcat/bigquery/watch-events-2016-2026` 和 `push-events-2016-2026`，不会共用 Parquet 或 checkpoint。脚本只允许在 `/Volumes/T0` 已真实挂载时启动，避免移动硬盘掉线后误写本机磁盘。每 30 分钟记录当前 GCP Project 的月度 BigQuery 计费量，达到 80% 警告、90% 停止对应下载任务；启动时额度查询失败也会拒绝运行。阈值和间隔可通过 `STARCAT_BQ_QUOTA_WARNING_PERCENT`、`STARCAT_BQ_QUOTA_STOP_PERCENT`、`STARCAT_BQ_QUOTA_LOG_INTERVAL_SECONDS` 覆盖。相同任务可安全续传，已通过 Parquet footer 和 SHA-256 校验的日期不会再次查询。
 
 ## 管道结构
 
 ```text
 SourceConnector
-  -> WatchEvent 行为 raw + PushEvent 仓库目录 raw
+  -> WatchEvent 行为 raw + PushEvent 精简事件 raw / 仓库目录 raw
   -> CanonicalNormalizer
   -> GitHub API Top N 权威 metadata 覆盖
   -> canonical Parquet
