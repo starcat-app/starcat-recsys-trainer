@@ -166,6 +166,11 @@ class GitHubRepositoryMetadataSource:
                         f"GitHub API 限流：repo_id={repo_id}, remaining={remaining}, reset={reset}"
                     )
                 if response.status_code == 403:
+                    if response.headers.get("x-ratelimit-remaining") is not None:
+                        # Token 已成功读取其他公开仓库且额度仍有剩余时，403 表示当前仓库
+                        # 被 ToS/DMCA/组织策略单独阻断。它与 451 一样不具备可训练 metadata。
+                        unavailable.append(repo_id)
+                        continue
                     raise RuntimeError(f"GitHub API 权限不足：repo_id={repo_id}, status=403")
                 if response.status_code != 200 or response.payload is None:
                     raise RuntimeError(

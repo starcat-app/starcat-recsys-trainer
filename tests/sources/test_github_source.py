@@ -168,6 +168,17 @@ def test_collect_distinguishes_permission_denied_from_rate_limit(tmp_path: Path)
         )
 
 
+def test_collect_skips_repository_blocked_with_remaining_quota(tmp_path: Path) -> None:
+    """额度尚有剩余的单仓库 403 是仓库级阻断，不是 token 整体失效。"""
+
+    gateway = FakeGitHubGateway({1: GitHubResponse(403, {"x-ratelimit-remaining": "4126"}, None)})
+
+    GitHubRepositoryMetadataSource([1], GitHubMetadataConfig(), gateway).collect(_context(tmp_path))
+
+    manifest = json.loads((tmp_path / "raw/github_metadata/manifest.json").read_text())
+    assert manifest["unavailable_repo_ids"] == [1]
+
+
 def test_httpx_gateway_sends_auth_version_and_etag_headers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

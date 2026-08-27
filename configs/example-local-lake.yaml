@@ -1,5 +1,5 @@
-run_id: gharchive-local-2016-2026-v3
-workspace: /Volumes/T0/Starcat/training/gharchive-local-2016-2026-v3
+run_id: gharchive-local-2016-2026-v4
+workspace: /Volumes/T0/Starcat/training/gharchive-local-2016-2026-v4
 registry: /Volumes/T0/Starcat/training/registry
 random_seed: 42
 
@@ -52,6 +52,6 @@ evaluation:
   maximum_subjects: 10000
 
 publish:
-  model_version: gharchive-local-2016-2026-v3
+  model_version: gharchive-local-2016-2026-v4
   selected_model: costar
   metric_gates: {}
