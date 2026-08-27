@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -17,7 +16,7 @@ from starcat_recsys.interfaces import Artifact, TaskContext
 from starcat_recsys.recommendations import (
     artifact_path,
     training_dataset,
-    write_recommendations,
+    write_recommendations_query,
 )
 
 
@@ -31,6 +30,7 @@ class CoStarConfig:
     shrinkage: float = 10.0
     minimum_support: float = 0.0
     maximum_repositories_per_subject: int = 2_000
+    maximum_pair_observations: int = 100_000_000
     top_k: int = 100
     model_name: str = "costar"
 
@@ -45,6 +45,11 @@ class CoStarConfig:
             raise ValueError("shrinkage 和 minimum_support 不能为负数")
         if self.maximum_repositories_per_subject < 2:
             raise ValueError("maximum_repositories_per_subject 不能小于 2")
+        maximum_subject_pairs = (
+            self.maximum_repositories_per_subject * (self.maximum_repositories_per_subject - 1) // 2
+        )
+        if self.maximum_pair_observations < maximum_subject_pairs:
+            raise ValueError("maximum_pair_observations 不能小于单个主体的最大 pair 数")
         if self.top_k <= 0:
             raise ValueError("top_k 必须大于 0")
         if not self.model_name or not self.model_name.replace("_", "").isalnum():
@@ -66,37 +71,14 @@ class CoStarTrainer:
         connection = duckdb.connect()
         try:
             connection.read_parquet(artifact_path(dataset).as_posix()).create_view("dataset")
-            rows = connection.execute(self._query()).fetchall()
+            artifact = write_recommendations_query(
+                connection,
+                context.workspace / "models" / self.name / "recommendations.parquet",
+                self._query(),
+                self.name,
+            )
         finally:
             connection.close()
-
-        recommendations = []
-        for source, target, score, rank, support, cosine in rows:
-            signals = json.dumps(
-                {
-                    "cosine": round(float(cosine), 8),
-                    "half_life_days": self._config.half_life_days,
-                    "kind": "time_decayed_costar",
-                    "support": round(float(support), 8),
-                },
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-            recommendations.append(
-                {
-                    "source_repo_id": int(source),
-                    "target_repo_id": int(target),
-                    "score": float(score),
-                    "rank": int(rank),
-                    "model": self.name,
-                    "signals": signals,
-                }
-            )
-        artifact = write_recommendations(
-            context.workspace / "models" / self.name / "recommendations.parquet",
-            recommendations,
-            self.name,
-        )
         return [artifact]
 
     def _query(self) -> str:
@@ -140,11 +122,36 @@ class CoStarTrainer:
             )
             WHERE subject_rank <= {config.maximum_repositories_per_subject}
         ),
+        subject_pair_counts AS (
+            SELECT
+                source_subject_id,
+                count(*) * (count(*) - 1) / 2 AS pair_count
+            FROM capped
+            GROUP BY source_subject_id
+            HAVING count(*) >= 2
+        ),
+        sampled_subjects AS (
+            SELECT source_subject_id
+            FROM (
+                SELECT
+                    source_subject_id,
+                    sum(pair_count) OVER (
+                        ORDER BY hash(source_subject_id), source_subject_id
+                    ) AS cumulative_pair_count
+                FROM subject_pair_counts
+            )
+            WHERE cumulative_pair_count <= {config.maximum_pair_observations}
+        ),
+        sampled AS (
+            SELECT capped.*
+            FROM capped
+            INNER JOIN sampled_subjects USING (source_subject_id)
+        ),
         diagonals AS (
             SELECT
                 repo_id,
                 sum(subject_weight * time_weight) AS diagonal_support
-            FROM capped
+            FROM sampled
             GROUP BY repo_id
         ),
         pair_support AS (
@@ -155,8 +162,8 @@ class CoStarTrainer:
                     least(a.subject_weight, b.subject_weight)
                     * least(a.time_weight, b.time_weight)
                 ) AS support
-            FROM capped a
-            INNER JOIN capped b
+            FROM sampled a
+            INNER JOIN sampled b
               ON a.source_subject_id = b.source_subject_id
              AND a.repo_id < b.repo_id
             GROUP BY a.repo_id, b.repo_id
@@ -190,7 +197,18 @@ class CoStarTrainer:
             ) AS rank
             FROM symmetric_edges
         )
-        SELECT source_repo_id, target_repo_id, score, rank, support, cosine
+        SELECT
+            CAST(source_repo_id AS BIGINT) AS source_repo_id,
+            CAST(target_repo_id AS BIGINT) AS target_repo_id,
+            CAST(score AS FLOAT) AS score,
+            CAST(rank AS INTEGER) AS rank,
+            '{self.name}'::VARCHAR AS model,
+            CAST(json_object(
+                'cosine', round(cosine, 8),
+                'half_life_days', {config.half_life_days},
+                'kind', 'time_decayed_costar',
+                'support', round(support, 8)
+            ) AS VARCHAR) AS signals
         FROM ranked
         WHERE rank <= {config.top_k}
         ORDER BY source_repo_id, rank

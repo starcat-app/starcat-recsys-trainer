@@ -181,6 +181,56 @@ def test_filters_overactive_subjects_with_configured_upper_bound(tmp_path: Path)
     assert report["training_eligible_subject_count"] == 1
 
 
+def test_limits_repository_catalog_by_train_support(tmp_path: Path) -> None:
+    rows = [
+        _interaction("u1:1", "u1", 1, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("u1:2", "u1", 2, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("u2:1", "u2", 1, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("u2:3", "u2", 3, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("u3:1", "u3", 1, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("u3:2", "u3", 2, "2025-01-01", "star_event", "2025-01-01"),
+    ]
+
+    dataset, repositories = _build_dataset_with_config(
+        tmp_path,
+        rows,
+        DatasetConfig(
+            train_end=datetime(2025, 4, 1, tzinfo=UTC),
+            validation_end=datetime(2025, 8, 1, tzinfo=UTC),
+            maximum_repository_count=2,
+        ),
+    )
+
+    assert {row["repo_id"] for row in repositories} == {1, 2}
+    assert {row["repo_id"] for row in dataset} == {1, 2}
+    report = json.loads((tmp_path / "workspace/dataset/quality-report.json").read_text())
+    assert report["candidate_repository_count"] == 3
+    assert report["public_repository_count"] == 2
+
+
+def test_deterministically_samples_subjects(tmp_path: Path) -> None:
+    rows = [
+        _interaction(f"{subject}:1", subject, 1, "2025-01-01", "star_event", "2025-01-01")
+        for subject in [f"u{index}" for index in range(100)]
+    ] + [
+        _interaction(f"{subject}:2", subject, 2, "2025-01-01", "star_event", "2025-01-01")
+        for subject in [f"u{index}" for index in range(100)]
+    ]
+    config = DatasetConfig(
+        train_end=datetime(2025, 4, 1, tzinfo=UTC),
+        validation_end=datetime(2025, 8, 1, tzinfo=UTC),
+        subject_sample_rate=0.1,
+    )
+
+    first, _ = _build_dataset_with_config(tmp_path / "first", rows, config)
+    second, _ = _build_dataset_with_config(tmp_path / "second", rows, config)
+
+    first_subjects = {row["source_subject_id"] for row in first}
+    second_subjects = {row["source_subject_id"] for row in second}
+    assert first_subjects == second_subjects
+    assert 0 < len(first_subjects) < 100
+
+
 def test_rejects_inconsistent_dataset_activity_filters() -> None:
     with pytest.raises(ValueError, match="maximum_repositories_per_subject"):
         DatasetConfig(
@@ -194,6 +244,18 @@ def test_rejects_inconsistent_dataset_activity_filters() -> None:
             train_end=datetime(2025, 4, 1, tzinfo=UTC),
             validation_end=datetime(2025, 8, 1, tzinfo=UTC),
             minimum_repository_interactions=0,
+        )
+    with pytest.raises(ValueError, match="maximum_repository_count"):
+        DatasetConfig(
+            train_end=datetime(2025, 4, 1, tzinfo=UTC),
+            validation_end=datetime(2025, 8, 1, tzinfo=UTC),
+            maximum_repository_count=1,
+        )
+    with pytest.raises(ValueError, match="subject_sample_rate"):
+        DatasetConfig(
+            train_end=datetime(2025, 4, 1, tzinfo=UTC),
+            validation_end=datetime(2025, 8, 1, tzinfo=UTC),
+            subject_sample_rate=0,
         )
 
 

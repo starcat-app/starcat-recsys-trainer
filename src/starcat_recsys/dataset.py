@@ -27,6 +27,8 @@ class DatasetConfig:
     minimum_repositories_per_subject: int = 2
     maximum_repositories_per_subject: int | None = None
     minimum_repository_interactions: int = 1
+    maximum_repository_count: int | None = None
+    subject_sample_rate: float = 1.0
 
     def __post_init__(self) -> None:
         train_end = parse_datetime(self.train_end)
@@ -44,6 +46,10 @@ class DatasetConfig:
             raise ValueError("maximum_repositories_per_subject 不能小于最小值")
         if self.minimum_repository_interactions <= 0:
             raise ValueError("minimum_repository_interactions 必须大于 0")
+        if self.maximum_repository_count is not None and self.maximum_repository_count <= 1:
+            raise ValueError("maximum_repository_count 必须大于 1")
+        if not 0 < self.subject_sample_rate <= 1:
+            raise ValueError("subject_sample_rate 必须在 (0, 1] 范围")
 
 
 class DuckDBDatasetBuilder:
@@ -110,6 +116,8 @@ class DuckDBDatasetBuilder:
                     "minimum_repository_interactions": (
                         self._config.minimum_repository_interactions
                     ),
+                    "maximum_repository_count": self._config.maximum_repository_count,
+                    "subject_sample_rate": self._config.subject_sample_rate,
                 },
                 **quality,
             },
@@ -122,6 +130,8 @@ class DuckDBDatasetBuilder:
         minimum = self._config.minimum_repositories_per_subject
         maximum = self._config.maximum_repositories_per_subject
         minimum_repository_interactions = self._config.minimum_repository_interactions
+        maximum_repository_count = self._config.maximum_repository_count
+        subject_sample_threshold = int(self._config.subject_sample_rate * 1_000_000)
         connection.execute(
             """
             CREATE TEMP TABLE latest_repositories AS
@@ -183,7 +193,7 @@ class DuckDBDatasetBuilder:
         )
         connection.execute(
             f"""
-            CREATE TEMP TABLE valid_repositories AS
+            CREATE TEMP TABLE candidate_repositories AS
             SELECT r.*, s.training_stargazer_count
             FROM latest_repositories r
             INNER JOIN repository_interaction_statistics s USING (repo_id)
@@ -191,6 +201,24 @@ class DuckDBDatasetBuilder:
               AND NOT r.archived
               AND NOT r.disabled
               AND s.training_stargazer_count >= {minimum_repository_interactions}
+            """
+        )
+        repository_limit_predicate = (
+            f"WHERE repository_rank <= {maximum_repository_count}"
+            if maximum_repository_count is not None
+            else ""
+        )
+        connection.execute(
+            f"""
+            CREATE TEMP TABLE valid_repositories AS
+            SELECT * EXCLUDE (repository_rank)
+            FROM (
+                SELECT *, row_number() OVER (
+                    ORDER BY training_stargazer_count DESC, repo_id
+                ) AS repository_rank
+                FROM candidate_repositories
+            )
+            {repository_limit_predicate}
             """
         )
         connection.execute(
@@ -241,6 +269,8 @@ class DuckDBDatasetBuilder:
             FROM subject_statistics
             WHERE total_repo_count >= {minimum}
               {maximum_predicate}
+              AND hash(source || ':' || source_subject_id) % 1000000
+                    < {subject_sample_threshold}
             """
         )
         connection.execute(
@@ -272,6 +302,7 @@ class DuckDBDatasetBuilder:
         }
         report: dict[str, Any] = {key: _count(connection, table) for key, table in tables.items()}
         report["public_repository_count"] = _count(connection, "valid_repositories")
+        report["candidate_repository_count"] = _count(connection, "candidate_repositories")
         report["eligible_subject_count"] = _count(connection, "eligible_subjects")
         report["training_eligible_subject_count"] = _count(
             connection,

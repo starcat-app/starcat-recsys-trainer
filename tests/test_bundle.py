@@ -20,7 +20,9 @@ from starcat_recsys.interfaces import TaskContext
 from starcat_recsys.recommendations import write_recommendations
 
 
-def test_publishes_verifies_and_queries_immutable_bundle(tmp_path: Path) -> None:
+def test_publishes_verifies_and_queries_immutable_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     recommendations = write_recommendations(
         tmp_path / "recommendations.parquet",
         [
@@ -42,6 +44,10 @@ def test_publishes_verifies_and_queries_immutable_bundle(tmp_path: Path) -> None
     registry = LocalModelRegistry(tmp_path / "registry")
     publisher = ServingBundlePublisher(
         BundleConfig("v1", metric_gates={"recall@2": 0.4}, git_commit="abc"), registry
+    )
+    monkeypatch.setattr(
+        "starcat_recsys.bundle.pq.read_table",
+        lambda *args, **kwargs: pytest.fail("Bundle 构建不应整表加载 Parquet"),
     )
 
     artifact = publisher.publish(

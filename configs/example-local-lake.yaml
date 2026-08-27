@@ -1,0 +1,55 @@
+run_id: gharchive-local-2016-2026-v1
+workspace: /Volumes/T0/Starcat/training/gharchive-local-2016-2026-v1
+registry: /Volumes/T0/Starcat/training/registry
+random_seed: 42
+
+sources:
+  - type: local_lake_partitions
+    workspace: /Volumes/T0/Starcat/bigquery/watch-events-2016-2026
+    dataset: watch_events
+    start_date: "2016-01-01"
+    end_date: "2026-08-25"
+    verify_checksums: true
+  - type: github_api
+    repo_ids_from_canonical: true
+    repository_limit: 5000
+    maximum_requests: 5000
+    cache_directory: /Volumes/T0/Starcat/training/cache/github-metadata
+    token_env: GITHUB_TOKEN
+    api_version: "2026-03-10"
+
+dataset:
+  train_end: "2026-01-01T00:00:00Z"
+  validation_end: "2026-05-01T00:00:00Z"
+  minimum_repositories_per_subject: 5
+  maximum_repositories_per_subject: 200
+  minimum_repository_interactions: 20
+  maximum_repository_count: 5000
+  # 全量 Raw 都会扫描和去重；这里只对进入单机训练的主体做稳定哈希抽样。
+  subject_sample_rate: 0.02
+
+training:
+  reference_time: "2026-01-01T00:00:00Z"
+  top_k: 100
+  svd_components: 64
+  svd_maximum_interactions: 2000000
+  svd_maximum_subjects: 100000
+  svd_maximum_repositories: 5000
+  svd_neighbor_batch_size: 500
+  half_life_days: 365
+  legacy_time_weight: 0.35
+  shrinkage: 10
+  minimum_support: 2
+  maximum_repositories_per_subject: 100
+  maximum_pair_observations: 50000000
+  run_ablations: false
+
+evaluation:
+  split: validation
+  k: 20
+  maximum_subjects: 10000
+
+publish:
+  model_version: gharchive-local-2016-2026-v1
+  selected_model: costar
+  metric_gates: {}

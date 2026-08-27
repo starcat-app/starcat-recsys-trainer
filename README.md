@@ -19,6 +19,7 @@
 - 最新完整快照选择、同源去重、公开仓库过滤、主体权重和时间切分。
 - train-only 主体权重、subject-repo 唯一隐式反馈和 validation/test 未来数据隔离。
 - Popular、TruncatedSVD、时间衰减 co-star 和两个 ablation 变体。
+- Dataset 稳定主体抽样、Top 仓库目录、co-star pair 预算、SVD 非零项预算和评估主体预算，适配单机全量 Raw 扫描。
 - 单主体冷启动时明确跳过不满足数学条件的 SVD，继续交付可用的 Popular/co-star。
 - Recall@K、NDCG@K、MRR@K、Coverage 离线评估和指标发布门禁。
 - 不可变本地 Model Registry、SQLite ServingBundle、checksum/quick-check 校验和查询 CLI。
@@ -46,6 +47,10 @@ uv run starcat-recsys bundle query \
 ```
 
 Registry 版本不可覆盖。重跑时同时修改 YAML 中的 `run_id` 和 `publish.model_version`。
+
+已下载的十年 WatchEvent 使用 `configs/example-local-lake.yaml`。该配置把 Raw、Canonical、
+训练 workspace 和 Registry 都留在 `/Volumes/T0`，并通过有界抽样完成第一版单机训练；运行前
+只需提供 `GITHUB_TOKEN`，不会再次查询 BigQuery。
 
 十年级 WatchEvent 与 PushEvent 首次采集使用两个可独立运行、独立续传的下载任务：
 

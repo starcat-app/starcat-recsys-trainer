@@ -12,7 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import pyarrow.parquet as pq
+import duckdb
+import pyarrow as pa
 
 from starcat_recsys.artifacts import artifact_for, write_json_atomic
 from starcat_recsys.interfaces import Artifact, TaskContext
@@ -25,12 +26,15 @@ class EvaluationConfig:
 
     split: str = "validation"
     k: int = 20
+    maximum_subjects: int = 10_000
 
     def __post_init__(self) -> None:
         if self.split not in {"validation", "test"}:
             raise ValueError("split 只能是 validation 或 test")
         if self.k <= 0:
             raise ValueError("k 必须大于 0")
+        if self.maximum_subjects <= 0:
+            raise ValueError("maximum_subjects 必须大于 0")
 
 
 class OfflineEvaluator:
@@ -45,11 +49,16 @@ class OfflineEvaluator:
         if not models:
             raise ValueError("至少需要一个 model_recommendations artifact")
 
-        histories, truths, catalog = _load_subject_sets(artifact_path(dataset), self._config.split)
+        histories, truths, catalog = _load_subject_sets(
+            artifact_path(dataset),
+            self._config.split,
+            self._config.maximum_subjects,
+        )
+        seed_repo_ids = {repo_id for history in histories.values() for repo_id in history}
         results = {}
         for model in models:
             model_name = str(model.metadata.get("model", "unknown"))
-            edges = _load_edges(artifact_path(model))
+            edges = _load_edges(artifact_path(model), seed_repo_ids)
             results[model_name] = self._evaluate_model(histories, truths, catalog, edges)
 
         output_directory = context.workspace / "evaluation"
@@ -121,35 +130,90 @@ class OfflineEvaluator:
 
 
 def _load_subject_sets(
-    path: Path, target_split: str
+    path: Path, target_split: str, maximum_subjects: int | None = None
 ) -> tuple[dict[str, set[int]], dict[str, set[int]], set[int]]:
-    table = pq.read_table(
-        path,
-        columns=["source_subject_id", "repo_id", "split", "training_eligible"],
-    )
+    connection = duckdb.connect()
+    try:
+        connection.read_parquet(path.as_posix()).create_view("dataset")
+        limit_clause = f"LIMIT {maximum_subjects}" if maximum_subjects is not None else ""
+        connection.execute(
+            f"""
+            CREATE TEMP TABLE evaluation_subjects AS
+            SELECT source_subject_id
+            FROM dataset
+            WHERE split = ?
+            GROUP BY source_subject_id
+            ORDER BY hash(source_subject_id), source_subject_id
+            {limit_clause}
+            """,
+            [target_split],
+        )
+        rows = connection.execute(
+            """
+            SELECT d.source_subject_id, d.repo_id, d.split, d.training_eligible
+            FROM dataset d
+            INNER JOIN evaluation_subjects USING (source_subject_id)
+            WHERE d.split IN ('train', ?)
+            ORDER BY d.source_subject_id, d.split, d.repo_id
+            """,
+            [target_split],
+        ).fetchall()
+        catalog_rows = connection.execute(
+            """
+            SELECT DISTINCT repo_id
+            FROM dataset
+            WHERE split = 'train' AND training_eligible
+            """
+        ).fetchall()
+    finally:
+        connection.close()
     histories: dict[str, set[int]] = defaultdict(set)
     truths: dict[str, set[int]] = defaultdict(set)
-    catalog: set[int] = set()
-    for row in table.to_pylist():
-        subject = str(row["source_subject_id"])
-        repo_id = int(row["repo_id"])
-        if row["split"] == "train":
+    catalog = {int(row[0]) for row in catalog_rows}
+    for subject_value, repo_value, split, _training_eligible in rows:
+        subject = str(subject_value)
+        repo_id = int(repo_value)
+        if split == "train":
             histories[subject].add(repo_id)
-            # Coverage 的分母必须是训练时模型可见的 catalog，不能被 validation/test
-            # 中首次出现的 repo 改变，否则模型不变时验证指标仍会漂移。
-            if row["training_eligible"]:
-                catalog.add(repo_id)
-        elif row["split"] == target_split:
+        elif split == target_split:
             truths[subject].add(repo_id)
     return dict(histories), dict(truths), catalog
 
 
-def _load_edges(path: Path) -> dict[int, list[tuple[int, float]]]:
+def _load_edges(
+    path: Path, source_repo_ids: set[int] | None = None
+) -> dict[int, list[tuple[int, float]]]:
+    connection = duckdb.connect()
+    try:
+        connection.read_parquet(path.as_posix()).create_view("model_edges")
+        if source_repo_ids is not None:
+            if not source_repo_ids:
+                return {}
+            connection.register(
+                "evaluation_seeds",
+                pa.table({"source_repo_id": sorted(source_repo_ids)}),
+            )
+            rows = connection.execute(
+                """
+                SELECT e.source_repo_id, e.target_repo_id, e.score
+                FROM model_edges e
+                INNER JOIN evaluation_seeds USING (source_repo_id)
+                ORDER BY e.source_repo_id, e.rank, e.target_repo_id
+                """
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT source_repo_id, target_repo_id, score
+                FROM model_edges
+                ORDER BY source_repo_id, rank, target_repo_id
+                """
+            ).fetchall()
+    finally:
+        connection.close()
     edges: dict[int, list[tuple[int, float]]] = defaultdict(list)
-    for row in pq.read_table(
-        path, columns=["source_repo_id", "target_repo_id", "score"]
-    ).to_pylist():
-        edges[int(row["source_repo_id"])].append((int(row["target_repo_id"]), float(row["score"])))
+    for source, target, score in rows:
+        edges[int(source)].append((int(target), float(score)))
     return dict(edges)
 
 

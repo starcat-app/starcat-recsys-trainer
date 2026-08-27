@@ -125,6 +125,12 @@ def run_pipeline(config_path: Path) -> Artifact:
                 minimum_repository_interactions=int(
                     dataset_config.get("minimum_repository_interactions", 1)
                 ),
+                maximum_repository_count=(
+                    int(dataset_config["maximum_repository_count"])
+                    if dataset_config.get("maximum_repository_count") is not None
+                    else None
+                ),
+                subject_sample_rate=float(dataset_config.get("subject_sample_rate", 1.0)),
             )
         ).build(context, canonical),
     )
@@ -140,9 +146,18 @@ def run_pipeline(config_path: Path) -> Artifact:
     )
     svd_models = executor.execute_optional(
         "train:svd",
-        lambda: SVDTrainer(SVDConfig(int(training_config.get("svd_components", 64)), top_k)).train(
-            context, dataset
-        ),
+        lambda: SVDTrainer(
+            SVDConfig(
+                components=int(training_config.get("svd_components", 64)),
+                top_k=top_k,
+                maximum_interactions=int(
+                    training_config.get("svd_maximum_interactions", 5_000_000)
+                ),
+                maximum_subjects=int(training_config.get("svd_maximum_subjects", 200_000)),
+                maximum_repositories=int(training_config.get("svd_maximum_repositories", 50_000)),
+                neighbor_batch_size=int(training_config.get("svd_neighbor_batch_size", 1_000)),
+            )
+        ).train(context, dataset),
         skip_on=InsufficientTrainingDataError,
     )
     if svd_models is not None:
@@ -187,6 +202,7 @@ def run_pipeline(config_path: Path) -> Artifact:
             EvaluationConfig(
                 split=str(evaluation_config.get("split", "validation")),
                 k=int(evaluation_config.get("k", 20)),
+                maximum_subjects=int(evaluation_config.get("maximum_subjects", 10_000)),
             )
         ).evaluate(context, [*dataset, *models]),
     )
@@ -353,6 +369,7 @@ def _costar_config(
         shrinkage=0.0 if no_shrinkage else float(config.get("shrinkage", 10)),
         minimum_support=float(config.get("minimum_support", 0)),
         maximum_repositories_per_subject=int(config.get("maximum_repositories_per_subject", 2_000)),
+        maximum_pair_observations=int(config.get("maximum_pair_observations", 100_000_000)),
         top_k=top_k,
         model_name=model_name,
     )

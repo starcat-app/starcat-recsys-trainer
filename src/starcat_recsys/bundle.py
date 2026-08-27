@@ -203,9 +203,6 @@ def query_bundle(
 
 
 def _build_database(database_path: Path, model_path: Path, repository_path: Path) -> None:
-    model_rows = pq.read_table(model_path).to_pylist()
-    repository_rows = pq.read_table(repository_path).to_pylist()
-    public_repo_ids = {int(row["repo_id"]) for row in repository_rows}
     with sqlite3.connect(database_path) as database:
         database.executescript(
             """
@@ -233,38 +230,47 @@ def _build_database(database_path: Path, model_path: Path, repository_path: Path
             CREATE INDEX recommendations_target_idx ON recommendations(target_repo_id);
             """
         )
-        database.executemany(
-            "INSERT INTO repositories VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [
+        for batch in pq.ParquetFile(repository_path).iter_batches(batch_size=10_000):
+            database.executemany(
+                "INSERT INTO repositories VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    row["repo_id"],
-                    row["full_name"],
-                    row["description"],
-                    json.dumps(row["topics"], ensure_ascii=False, separators=(",", ":")),
-                    row["primary_language"],
-                    row["license_key"],
-                    row["stars"],
-                    row["forks"],
-                    row["pushed_at"].isoformat() if row["pushed_at"] else None,
-                )
-                for row in repository_rows
-            ],
-        )
-        database.executemany(
-            "INSERT INTO recommendations VALUES (?, ?, ?, ?, ?, ?)",
-            [
+                    (
+                        row["repo_id"],
+                        row["full_name"],
+                        row["description"],
+                        json.dumps(row["topics"], ensure_ascii=False, separators=(",", ":")),
+                        row["primary_language"],
+                        row["license_key"],
+                        row["stars"],
+                        row["forks"],
+                        row["pushed_at"].isoformat() if row["pushed_at"] else None,
+                    )
+                    for row in batch.to_pylist()
+                ),
+            )
+        for batch in pq.ParquetFile(model_path).iter_batches(batch_size=50_000):
+            database.executemany(
+                "INSERT INTO recommendations VALUES (?, ?, ?, ?, ?, ?)",
                 (
-                    row["source_repo_id"],
-                    row["target_repo_id"],
-                    row["score"],
-                    row["rank"],
-                    row["model"],
-                    row["signals"],
-                )
-                for row in model_rows
-                if int(row["source_repo_id"]) in public_repo_ids
-                and int(row["target_repo_id"]) in public_repo_ids
-            ],
+                    (
+                        row["source_repo_id"],
+                        row["target_repo_id"],
+                        row["score"],
+                        row["rank"],
+                        row["model"],
+                        row["signals"],
+                    )
+                    for row in batch.to_pylist()
+                ),
+            )
+        # 模型只应包含 DatasetBuilder 筛选后的公开仓库，但 Bundle 边界仍做一次
+        # SQLite 内部校验，避免为了构造 Python repo_id 集合而让数百万仓库常驻内存。
+        database.execute(
+            """
+            DELETE FROM recommendations
+            WHERE source_repo_id NOT IN (SELECT repo_id FROM repositories)
+               OR target_repo_id NOT IN (SELECT repo_id FROM repositories)
+            """
         )
 
 

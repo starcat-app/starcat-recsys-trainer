@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
@@ -69,3 +70,50 @@ def test_svd_rejects_homogeneous_matrix_without_runtime_warning(tmp_path: Path) 
             TaskContext("run", tmp_path / "workspace", "sha256:test", 7),
             [artifact_for(path, "training_dataset", {})],
         )
+
+
+def test_svd_preprocessing_enforces_all_memory_bounds(tmp_path: Path) -> None:
+    path = tmp_path / "dataset.parquet"
+    pq.write_table(
+        pa.Table.from_pylist(
+            [
+                {
+                    "source_subject_id": subject,
+                    "repo_id": repo_id,
+                    "sample_weight": 1.0,
+                    "training_eligible": True,
+                    "split": "train",
+                }
+                for subject in [f"u{index}" for index in range(10)]
+                for repo_id in range(1, 6)
+            ]
+        ),
+        path,
+    )
+    trainer = SVDTrainer(
+        SVDConfig(
+            components=2,
+            top_k=1,
+            maximum_interactions=10,
+            maximum_subjects=3,
+            maximum_repositories=3,
+            neighbor_batch_size=2,
+        )
+    )
+    connection = duckdb.connect()
+    try:
+        connection.read_parquet(path.as_posix()).create_view("dataset")
+        trainer._prepare_values(connection)
+        interaction_count = connection.execute("SELECT count(*) FROM svd_values").fetchone()
+        subject_count = connection.execute(
+            "SELECT count(DISTINCT source_subject_id) FROM svd_values"
+        ).fetchone()
+        repository_count = connection.execute(
+            "SELECT count(DISTINCT repo_id) FROM svd_values"
+        ).fetchone()
+    finally:
+        connection.close()
+
+    assert interaction_count is not None and interaction_count[0] <= 10
+    assert subject_count is not None and subject_count[0] <= 3
+    assert repository_count is not None and repository_count[0] <= 3

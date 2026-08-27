@@ -63,6 +63,33 @@ def test_costar_applies_legacy_weight_when_timestamp_is_missing(tmp_path: Path) 
     assert json.loads(rows[0]["signals"])["support"] == 0.25
 
 
+def test_costar_bounds_subject_pair_expansion(tmp_path: Path) -> None:
+    path = tmp_path / "dataset.parquet"
+    pq.write_table(
+        pa.Table.from_pylist(
+            [_row(subject, repo_id) for subject in ["u1", "u2"] for repo_id in [1, 2, 3]]
+        ),
+        path,
+    )
+
+    artifact = CoStarTrainer(
+        CoStarConfig(
+            reference_time=datetime(2026, 1, 1, tzinfo=UTC),
+            shrinkage=0,
+            maximum_repositories_per_subject=3,
+            maximum_pair_observations=3,
+            top_k=2,
+        )
+    ).train(
+        TaskContext("run", tmp_path / "workspace", "sha256:test", 7),
+        [artifact_for(path, "training_dataset", {})],
+    )[0]
+
+    rows = pq.read_table(Path(artifact.uri[7:])).to_pylist()
+    assert len(rows) == 6
+    assert {json.loads(row["signals"])["support"] for row in rows} == {0.5}
+
+
 def _row(
     subject: str,
     repo_id: int,

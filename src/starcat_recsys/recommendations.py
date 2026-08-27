@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 
@@ -37,6 +38,20 @@ def write_recommendations(
     return artifact_for(path, "model_recommendations", {"model": model, "row_count": len(rows)})
 
 
+def write_recommendations_query(
+    connection: duckdb.DuckDBPyConnection,
+    path: Path,
+    query: str,
+    model: str,
+) -> Artifact:
+    """让 DuckDB 直接写 Top-K Parquet，避免大模型边集经过 Python List。"""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection.execute(f"COPY ({query}) TO {_sql_literal(path)} (FORMAT PARQUET, COMPRESSION ZSTD)")
+    row_count = pq.read_metadata(path).num_rows
+    return artifact_for(path, "model_recommendations", {"model": model, "row_count": row_count})
+
+
 def artifact_path(artifact: Artifact) -> Path:
     if not artifact.uri.startswith("file://"):
         raise ValueError("当前训练器只支持 file:// artifact")
@@ -48,3 +63,7 @@ def training_dataset(inputs: list[Artifact]) -> Artifact:
     if len(matches) != 1:
         raise ValueError(f"需要一个 training_dataset artifact，实际为 {len(matches)}")
     return matches[0]
+
+
+def _sql_literal(path: Path) -> str:
+    return "'" + path.as_posix().replace("'", "''") + "'"
