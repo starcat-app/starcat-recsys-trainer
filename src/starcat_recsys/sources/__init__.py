@@ -6,6 +6,7 @@ from starcat_recsys.sources.bigquery_push import (
     BigQueryPushEventSource,
     BigQueryPushMetadataConfig,
 )
+from starcat_recsys.sources.local_lake import LocalLakeConfig, LocalLakePartitionSource
 from starcat_recsys.sources.starcat_collection import (
     StarcatCollectionAPISource,
     StarcatCollectionConfig,
@@ -17,6 +18,8 @@ __all__ = [
     "BigQueryPushEventSource",
     "BigQueryPushMetadataConfig",
     "BigQueryWatchEventSource",
+    "LocalLakeConfig",
+    "LocalLakePartitionSource",
     "StarcatCollectionAPISource",
     "StarcatCollectionConfig",
 ]

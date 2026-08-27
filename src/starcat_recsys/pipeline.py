@@ -40,6 +40,7 @@ from starcat_recsys.sources.github import (
     GitHubRepositoryMetadataSource,
 )
 from starcat_recsys.sources.local import LocalFileSource
+from starcat_recsys.sources.local_lake import LocalLakeConfig, LocalLakePartitionSource
 from starcat_recsys.sources.starcat import StarcatSnapshotConfig, StarcatSnapshotSource
 from starcat_recsys.sources.starcat_collection import (
     StarcatCollectionAPISource,
@@ -250,6 +251,16 @@ def _source_connector(
             _resolve_path(base, _required_string(config, "path")),
             source=_required_string(config, "source"),
             kind=_required_string(config, "kind"),
+        )
+    if source_type == "local_lake_partitions":
+        return LocalLakePartitionSource(
+            LocalLakeConfig(
+                workspace=_resolve_path(base, _required_string(config, "workspace")),
+                dataset=_required_string(config, "dataset"),
+                start_date=date.fromisoformat(_required_string(config, "start_date")),
+                end_date=date.fromisoformat(_required_string(config, "end_date")),
+                verify_checksums=bool(config.get("verify_checksums", True)),
+            )
         )
     if source_type == "starcat_snapshot":
         return StarcatSnapshotSource(

@@ -10,6 +10,7 @@
 - GH Archive BigQuery `PushEvent` 使用独立显式 UTC 日表下载精简原始事件，只保留事件 ID、actor ID、repo ID、仓库名和事件时间。
 - GH Archive BigQuery `PushEvent` 跨年份聚合仓库基础目录，提供最新名称、首次/末次 Push 和事件数，并使用独立总预算门禁。
 - 只读检查既有 WatchEvent / PushEvent Raw，重新校验 Parquet footer、字段、行数和 SHA-256，并输出不含真实路径的 Catalog 快照。
+- 通过 `local_lake_partitions` 直接登记本地 WatchEvent / PushEvent 日分区，训练 run 不复制长期 Raw。
 - 面向本机 Admin Console 的受控 SQL Lab，强制只读 `githubarchive`、dry run、SQL hash 绑定、10 GiB 查询预算和 200 行 / 2 MiB 结果上限。
 - GitHub Repository REST metadata 采集，支持 ETag cache、请求上限和限流识别。
 - Starcat schema v1 匿名完整 Star 快照校验、HMAC 脱敏和导入。

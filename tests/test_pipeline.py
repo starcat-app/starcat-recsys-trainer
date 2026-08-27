@@ -20,6 +20,7 @@ from starcat_recsys.pipeline import (
 )
 from starcat_recsys.sources.bigquery import BigQueryConfig
 from starcat_recsys.sources.bigquery_push import BigQueryPushMetadataConfig
+from starcat_recsys.sources.local_lake import LocalLakePartitionSource
 
 
 def test_runs_end_to_end_pipeline_and_cli_query(tmp_path: Path, capsys: object) -> None:
@@ -264,6 +265,22 @@ def test_builds_bigquery_connector_with_resume_configuration(
     assert captured[0].maximum_total_bytes_billed == 2_000
     assert captured[0].retry_attempts == 7
     assert captured[0].retry_initial_delay_seconds == 2
+
+
+def test_builds_local_lake_partition_connector(tmp_path: Path) -> None:
+    connector = _source_connector(
+        {
+            "type": "local_lake_partitions",
+            "workspace": "/Volumes/T0/Starcat/bigquery/watch-events-2016-2026",
+            "dataset": "watch_events",
+            "start_date": "2016-01-01",
+            "end_date": "2026-08-25",
+            "verify_checksums": False,
+        },
+        tmp_path,
+    )
+
+    assert isinstance(connector, LocalLakePartitionSource)
 
 
 def test_download_watch_events_cli_reports_summary(
