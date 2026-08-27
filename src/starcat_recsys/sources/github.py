@@ -28,6 +28,7 @@ class GitHubMetadataConfig:
     timeout_seconds: float = 30.0
     maximum_requests: int = 5_000
     cache_directory: Path | None = None
+    reuse_cached_payloads: bool = False
 
     def __post_init__(self) -> None:
         if not self.token_env:
@@ -124,12 +125,21 @@ class GitHubRepositoryMetadataSource:
         gateway = self._gateway or HttpxGitHubGateway(self._config)
         rows: list[dict[str, Any]] = []
         not_found: list[int] = []
+        unavailable: list[int] = []
         cache_hits = 0
+        network_requests = 0
 
         try:
             for repo_id in self._repo_ids:
                 cached_payload, etag = _read_cache(cache_directory, repo_id)
+                # 失败 run 使用新的 run_id 重跑时，可显式复用刚刚成功获取的共享 cache。
+                # 默认仍执行 ETag 刷新，避免正常周期训练长期读取陈旧 metadata。
+                if self._config.reuse_cached_payloads and cached_payload is not None:
+                    rows.append(cached_payload)
+                    cache_hits += 1
+                    continue
                 response = gateway.fetch_repository(repo_id, etag)
+                network_requests += 1
                 if response.status_code == 304:
                     if cached_payload is None:
                         raise RuntimeError(f"仓库 {repo_id} 返回 304 但本地无缓存")
@@ -138,6 +148,11 @@ class GitHubRepositoryMetadataSource:
                     continue
                 if response.status_code == 404:
                     not_found.append(repo_id)
+                    continue
+                if response.status_code == 451:
+                    # 因法律原因不可用的公开仓库与已删除仓库一样不能进入训练目录；这不是
+                    # 认证、限流或服务异常，不应让其余数千个仓库的 metadata 采集中断。
+                    unavailable.append(repo_id)
                     continue
                 if response.status_code == 429 or (
                     response.status_code == 403
@@ -182,6 +197,7 @@ class GitHubRepositoryMetadataSource:
                 "row_count": len(rows),
                 "requested_count": len(self._repo_ids),
                 "cache_hits": cache_hits,
+                "network_request_count": network_requests,
             },
         )
         write_json_atomic(
@@ -192,6 +208,7 @@ class GitHubRepositoryMetadataSource:
                 "run_id": context.run_id,
                 "artifact": artifact.metadata | {"checksum": artifact.checksum},
                 "not_found_repo_ids": not_found,
+                "unavailable_repo_ids": unavailable,
             },
         )
         return [artifact]

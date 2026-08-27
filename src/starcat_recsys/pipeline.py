@@ -321,6 +321,7 @@ def _source_connector(
                     if config.get("cache_directory")
                     else None
                 ),
+                reuse_cached_payloads=bool(config.get("reuse_cached_payloads", False)),
             ),
         )
     if source_type == "bigquery":

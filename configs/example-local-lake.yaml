@@ -1,5 +1,5 @@
-run_id: gharchive-local-2016-2026-v1
-workspace: /Volumes/T0/Starcat/training/gharchive-local-2016-2026-v1
+run_id: gharchive-local-2016-2026-v3
+workspace: /Volumes/T0/Starcat/training/gharchive-local-2016-2026-v3
 registry: /Volumes/T0/Starcat/training/registry
 random_seed: 42
 
@@ -15,6 +15,8 @@ sources:
     repository_limit: 5000
     maximum_requests: 5000
     cache_directory: /Volumes/T0/Starcat/training/cache/github-metadata
+    # 仅用于本次失败 run 的续跑；日常周期训练保持 false，让 ETag 刷新 metadata。
+    reuse_cached_payloads: true
     token_env: GITHUB_TOKEN
     api_version: "2026-03-10"
 
@@ -50,6 +52,6 @@ evaluation:
   maximum_subjects: 10000
 
 publish:
-  model_version: gharchive-local-2016-2026-v1
+  model_version: gharchive-local-2016-2026-v3
   selected_model: costar
   metric_gates: {}

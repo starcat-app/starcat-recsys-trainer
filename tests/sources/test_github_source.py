@@ -90,6 +90,48 @@ def test_collect_reuses_configured_cache_across_runs(tmp_path: Path) -> None:
     assert artifact.metadata["cache_hits"] == 1
 
 
+def test_collect_can_reuse_shared_cache_without_network_refresh(tmp_path: Path) -> None:
+    """失败 run 可显式复用刚写入的 cache，避免重复刷新数千个仓库。"""
+
+    cache = tmp_path / "shared-cache"
+    initial = GitHubMetadataConfig(maximum_requests=1, cache_directory=cache)
+    GitHubRepositoryMetadataSource([1], initial, FakeGitHubGateway({1: _response(1)})).collect(
+        _context(tmp_path / "run-1")
+    )
+    gateway = FakeGitHubGateway({})
+    retry = GitHubMetadataConfig(
+        maximum_requests=1,
+        cache_directory=cache,
+        reuse_cached_payloads=True,
+    )
+
+    artifact = GitHubRepositoryMetadataSource([1], retry, gateway).collect(
+        _context(tmp_path / "run-2")
+    )[0]
+
+    assert gateway.calls == []
+    assert artifact.metadata["cache_hits"] == 1
+    assert artifact.metadata["network_request_count"] == 0
+
+
+def test_collect_skips_repository_unavailable_for_legal_reasons(tmp_path: Path) -> None:
+    """单个 451 仓库不能中断其余公开仓库的 metadata 采集。"""
+
+    gateway = FakeGitHubGateway(
+        {
+            1: _response(1),
+            2: GitHubResponse(451, {}, None),
+        }
+    )
+
+    GitHubRepositoryMetadataSource([1, 2], GitHubMetadataConfig(), gateway).collect(
+        _context(tmp_path)
+    )
+
+    manifest = json.loads((tmp_path / "raw/github_metadata/manifest.json").read_text())
+    assert manifest["unavailable_repo_ids"] == [2]
+
+
 def test_collect_refuses_request_plan_over_cap(tmp_path: Path) -> None:
     context = _context(tmp_path)
     source = GitHubRepositoryMetadataSource(
