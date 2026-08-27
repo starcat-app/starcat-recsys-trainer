@@ -15,7 +15,7 @@
 - GitHub Repository REST metadata 采集，支持 ETag cache、请求上限和限流识别。
 - Starcat schema v1 匿名完整 Star 快照校验、HMAC 脱敏和导入。
 - `starcat-collection-api` Admin 导出 Pull，校验响应 checksum、字节上限、schema 和 active 快照唯一性。
-- `InteractionRecord` / `RepositoryRecord` Canonical Parquet 与全链路 manifest。
+- DuckDB 流式生成 `InteractionRecord` / `RepositoryRecord` Canonical Parquet；十年事件不进入 Python 行对象列表。
 - 最新完整快照选择、同源去重、公开仓库过滤、主体权重和时间切分。
 - train-only 主体权重、subject-repo 唯一隐式反馈和 validation/test 未来数据隔离。
 - Popular、TruncatedSVD、时间衰减 co-star 和两个 ablation 变体。
@@ -89,7 +89,7 @@ uv run starcat-recsys lake inspect-push-events \
 ```text
 SourceConnector
   -> WatchEvent 行为 raw + PushEvent 精简事件 raw / 仓库目录 raw
-  -> CanonicalNormalizer
+  -> CanonicalNormalizer（DuckDB 流式扫描外部 Parquet）
   -> GitHub API Top N 权威 metadata 覆盖
   -> canonical Parquet
   -> DuckDBDatasetBuilder

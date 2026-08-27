@@ -131,3 +131,115 @@ def test_normalizes_all_sources_without_cross_source_identity_join(tmp_path: Pat
     assert repositories[1]["full_name"] == "starcat/push-only"
     assert repositories[1]["metadata_version"] == 0
     assert (tmp_path / "workspace/canonical/manifest.json").exists()
+
+
+def test_streams_multiple_watch_partitions_without_python_row_loading(tmp_path: Path) -> None:
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    inputs = []
+    for index in range(2):
+        path = raw / f"watch-{index}.parquet"
+        pq.write_table(
+            pa.table(
+                {
+                    "source_record_id": [f"event-{index}"],
+                    "actor_id": [str(index + 1)],
+                    "repo_id": [index + 10],
+                    "created_at": [f"2026-01-0{index + 1}T00:00:00Z"],
+                }
+            ),
+            path,
+        )
+        inputs.append(artifact_for(path, "raw_interactions", {"source": "gh_archive"}))
+    artifacts = CanonicalNormalizer().normalize(
+        TaskContext("run", tmp_path / "workspace", "sha256:config", 7), inputs
+    )
+
+    interaction = next(item for item in artifacts if item.kind == "canonical_interactions")
+    rows = pq.read_table(Path(interaction.uri.removeprefix("file://"))).to_pylist()
+    assert interaction.metadata["row_count"] == 2
+    assert {row["repo_id"] for row in rows} == {10, 11}
+    assert all(len(row["source_subject_id"]) == 64 for row in rows)
+
+
+def test_incremental_metadata_normalization_reuses_canonical_interactions(tmp_path: Path) -> None:
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    watch_path = raw / "watch.parquet"
+    pq.write_table(
+        pa.table(
+            {
+                "source_record_id": ["event-1"],
+                "actor_id": ["1"],
+                "repo_id": [10],
+                "created_at": ["2026-01-01T00:00:00Z"],
+            }
+        ),
+        watch_path,
+    )
+    context = TaskContext("run", tmp_path / "workspace", "sha256:config", 7)
+    initial = CanonicalNormalizer().normalize(
+        context, [artifact_for(watch_path, "raw_interactions", {"source": "gh_archive"})]
+    )
+    original_interaction = next(item for item in initial if item.kind == "canonical_interactions")
+    github_path = raw / "github.jsonl"
+    github_path.write_text(
+        json.dumps(
+            {
+                "fetched_at": "2026-01-02T00:00:00Z",
+                "repository": {
+                    "id": 10,
+                    "full_name": "owner/repo",
+                    "visibility": "public",
+                },
+            }
+        )
+        + "\n"
+    )
+
+    merged = CanonicalNormalizer().normalize(
+        context,
+        [artifact_for(github_path, "raw_repositories", {"source": "github_api"})],
+        existing=initial,
+    )
+
+    interaction = next(item for item in merged if item.kind == "canonical_interactions")
+    repository = next(item for item in merged if item.kind == "canonical_repositories")
+    assert interaction.checksum == original_interaction.checksum
+    assert repository.metadata["row_count"] == 1
+    manifest = json.loads((context.workspace / "canonical/manifest.json").read_text())
+    assert len(manifest["input_checksums"]) == 3
+
+
+def test_aggregates_local_push_event_partitions_into_repository_catalog(tmp_path: Path) -> None:
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    push_path = raw / "push.parquet"
+    pq.write_table(
+        pa.table(
+            {
+                "source_record_id": ["push-1", "push-2", "push-3"],
+                "actor_id": ["1", "2", "3"],
+                "repo_id": [10, 10, 20],
+                "full_name": ["old/repo", "new/repo", "other/repo"],
+                "created_at": [
+                    "2025-01-01T00:00:00Z",
+                    "2026-01-01T00:00:00Z",
+                    "2026-01-02T00:00:00Z",
+                ],
+            }
+        ),
+        push_path,
+    )
+
+    artifacts = CanonicalNormalizer().normalize(
+        TaskContext("run", tmp_path / "workspace", "sha256:config", 7),
+        [artifact_for(push_path, "raw_push_events", {"source": "gh_archive_push_events"})],
+    )
+
+    repository = next(item for item in artifacts if item.kind == "canonical_repositories")
+    rows = pq.read_table(Path(repository.uri.removeprefix("file://"))).to_pylist()
+    assert repository.metadata["row_count"] == 2
+    assert rows[0]["repo_id"] == 10
+    assert rows[0]["full_name"] == "new/repo"
+    assert rows[0]["metadata_version"] == 0

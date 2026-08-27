@@ -139,9 +139,7 @@ class LocalLakePartitionSource:
         except (OSError, pa.ArrowException) as error:
             raise ValueError(f"本地数据湖分区不是有效 Parquet：{path}") from error
         if tuple(schema.names) != spec.expected_columns:
-            raise ValueError(
-                f"本地数据湖分区字段不匹配：{suffix}，实际为 {tuple(schema.names)}"
-            )
+            raise ValueError(f"本地数据湖分区字段不匹配：{suffix}，实际为 {tuple(schema.names)}")
         row_count = int(metadata.get("row_count", -1))
         if parquet_metadata.num_rows != row_count:
             raise ValueError(f"本地数据湖分区行数与 checkpoint 不一致：{suffix}")

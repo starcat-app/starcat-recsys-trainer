@@ -93,15 +93,17 @@ def run_pipeline(config_path: Path) -> Artifact:
             int(github_config.get("repository_limit", 5_000)),
         )
         connector = _source_connector(github_config, base_directory, repo_ids=repo_ids)
-        raw_artifacts.extend(
-            executor.execute(
-                f"collect:deferred-github:{index}", partial(connector.collect, context)
-            )
+        deferred_artifacts = executor.execute(
+            f"collect:deferred-github:{index}", partial(connector.collect, context)
         )
-    if deferred_github_configs:
         canonical = executor.execute(
             "normalize:with-github-metadata",
-            lambda: CanonicalNormalizer().normalize(context, raw_artifacts),
+            partial(
+                CanonicalNormalizer().normalize,
+                context,
+                deferred_artifacts,
+                existing=canonical,
+            ),
         )
     dataset_config = _required_dict(document, "dataset")
     train_end = _datetime(dataset_config["train_end"])
