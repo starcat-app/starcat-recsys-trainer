@@ -4,6 +4,7 @@ All notable changes to Starcat Recommendation Pipeline are documented here.
 
 ## Unreleased
 
+- 新增既有 WatchEvent / PushEvent Raw 只读检查命令，输出不含真实路径的 Dataset、Partition 和 Storage Catalog 快照。
 - 新增 Admin Console 受控 SQL Lab CLI、JSON 额度/下载状态和固定生命周期动作；SQL 与结果不持久化到控制台 Job Catalog。
 - 双下载状态批量读取时只查询一次共享 Project 月度额度，避免控制台轮询重复消耗元数据查询。
 - 新增 PushEvent 五字段按日下载 CLI，与 WatchEvent 使用独立 raw 目录、checkpoint 和后台任务。

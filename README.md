@@ -9,6 +9,7 @@
 - GH Archive BigQuery `WatchEvent` 使用显式 UTC 日表采集，支持断点续传、原子 checkpoint、瞬时错误重试、分区与总扫描预算门禁。
 - GH Archive BigQuery `PushEvent` 使用独立显式 UTC 日表下载精简原始事件，只保留事件 ID、actor ID、repo ID、仓库名和事件时间。
 - GH Archive BigQuery `PushEvent` 跨年份聚合仓库基础目录，提供最新名称、首次/末次 Push 和事件数，并使用独立总预算门禁。
+- 只读检查既有 WatchEvent / PushEvent Raw，重新校验 Parquet footer、字段、行数和 SHA-256，并输出不含真实路径的 Catalog 快照。
 - 面向本机 Admin Console 的受控 SQL Lab，强制只读 `githubarchive`、dry run、SQL hash 绑定、10 GiB 查询预算和 200 行 / 2 MiB 结果上限。
 - GitHub Repository REST metadata 采集，支持 ETag cache、请求上限和限流识别。
 - Starcat schema v1 匿名完整 Star 快照校验、HMAC 脱敏和导入。
@@ -64,6 +65,18 @@ Registry 版本不可覆盖。重跑时同时修改 YAML 中的 `run_id` 和 `pu
 ./scripts/download-push-events.sh status --json --skip-quota
 ./scripts/download-watch-events.sh start --json
 ```
+
+把现有 Raw 登记到本地数据平台前，可独立执行同一只读检查：
+
+```bash
+uv run starcat-recsys lake inspect-watch-events \
+  --workspace /Volumes/T0/Starcat/bigquery/watch-events-2016-2026
+uv run starcat-recsys lake inspect-push-events \
+  --workspace /Volumes/T0/Starcat/bigquery/push-events-2016-2026
+```
+
+命令不会移动、复制或改写 Raw；输出只包含 `lake://` / `storage://` 逻辑 URI、分区状态和
+聚合统计，不包含真实数据目录。只有重新通过 Parquet 与 checksum 校验的分区才标记为 ready。
 
 `--skip-quota` 只用于同一控制台批次的第二个状态请求；两个任务共享同一 GCP Project 月度
 额度，控制台会复用第一个状态响应中的 quota。它不关闭下载 worker 自身的后台额度保护。

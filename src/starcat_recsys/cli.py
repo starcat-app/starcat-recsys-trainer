@@ -23,6 +23,7 @@ from starcat_recsys.bigquery_quota import (
 )
 from starcat_recsys.bundle import LocalModelRegistry, query_bundle, verify_bundle
 from starcat_recsys.interfaces import TaskContext
+from starcat_recsys.lake_catalog import inspect_bigquery_dataset
 from starcat_recsys.pipeline import run_pipeline
 from starcat_recsys.sources.bigquery import BigQueryConfig, BigQueryWatchEventSource
 from starcat_recsys.sources.bigquery_push import BigQueryPushEventSource
@@ -87,6 +88,16 @@ def build_parser() -> argparse.ArgumentParser:
     sql_query.add_argument("--expected-sql-sha256", required=True)
     sql_query.add_argument("--maximum-result-rows", type=int, default=200)
 
+    lake = commands.add_parser("lake", help="检查并登记本地数据湖产物")
+    lake_commands = lake.add_subparsers(dest="lake_command", required=True)
+    for command, event, help_text in (
+        ("inspect-watch-events", "watch-events", "只读检查既有 WatchEvent Raw"),
+        ("inspect-push-events", "push-events", "只读检查既有 PushEvent Raw"),
+    ):
+        inspect = lake_commands.add_parser(command, help=help_text)
+        inspect.add_argument("--workspace", type=Path, required=True)
+        inspect.set_defaults(lake_event=event)
+
     bundle = commands.add_parser("bundle", help="校验或查询 ServingBundle")
     bundle_commands = bundle.add_subparsers(dest="bundle_command", required=True)
     verify = bundle_commands.add_parser("verify", help="校验 Bundle")
@@ -117,6 +128,18 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.command == "pipeline" and arguments.pipeline_command == "run":
         artifact = run_pipeline(arguments.config)
         print(json.dumps(artifact.metadata, ensure_ascii=False, indent=2))
+    elif arguments.command == "lake" and arguments.lake_command in {
+        "inspect-watch-events",
+        "inspect-push-events",
+    }:
+        # Catalog 快照可能包含数千个分区，使用紧凑 JSON 控制 BFF 子进程输出上限。
+        print(
+            json.dumps(
+                inspect_bigquery_dataset(arguments.workspace, arguments.lake_event),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
     elif arguments.command == "bundle" and arguments.bundle_command == "verify":
         print(json.dumps(verify_bundle(arguments.path), ensure_ascii=False, indent=2))
     elif arguments.command == "bundle" and arguments.bundle_command == "query":
