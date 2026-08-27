@@ -15,6 +15,7 @@ import duckdb
 
 from starcat_recsys.artifacts import artifact_for, write_json_atomic
 from starcat_recsys.domain import parse_datetime
+from starcat_recsys.duckdb_runtime import connect_for_workspace
 from starcat_recsys.interfaces import Artifact, TaskContext
 
 
@@ -66,7 +67,7 @@ class DuckDBDatasetBuilder:
         dataset_path = output_directory / "interactions.parquet"
         repository_path = output_directory / "repositories.parquet"
 
-        connection = duckdb.connect()
+        connection = connect_for_workspace(context.workspace, "dataset")
         try:
             connection.read_parquet(_artifact_path(interaction).as_posix()).create_view(
                 "source_interactions"
@@ -131,7 +132,14 @@ class DuckDBDatasetBuilder:
         maximum = self._config.maximum_repositories_per_subject
         minimum_repository_interactions = self._config.minimum_repository_interactions
         maximum_repository_count = self._config.maximum_repository_count
-        subject_sample_threshold = int(self._config.subject_sample_rate * 1_000_000)
+        # DuckDB hash() 的实现不承诺跨版本稳定；固定长度 MD5 前缀按字典序比较，才能让
+        # 相同配置在依赖小版本升级后仍选择同一批 source-local subject。
+        subject_sample_predicate = ""
+        if self._config.subject_sample_rate < 1:
+            threshold = int(self._config.subject_sample_rate * (1 << 64))
+            subject_sample_predicate = (
+                f"AND substr(md5(source || ':' || source_subject_id), 1, 16) < '{threshold:016x}'"
+            )
         connection.execute(
             """
             CREATE TEMP TABLE latest_repositories AS
@@ -269,8 +277,7 @@ class DuckDBDatasetBuilder:
             FROM subject_statistics
             WHERE total_repo_count >= {minimum}
               {maximum_predicate}
-              AND hash(source || ':' || source_subject_id) % 1000000
-                    < {subject_sample_threshold}
+              {subject_sample_predicate}
             """
         )
         connection.execute(

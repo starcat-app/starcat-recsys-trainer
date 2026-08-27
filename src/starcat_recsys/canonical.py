@@ -9,7 +9,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 
@@ -21,6 +20,7 @@ from starcat_recsys.domain import (
     SourceKind,
     parse_datetime,
 )
+from starcat_recsys.duckdb_runtime import connect_for_workspace
 from starcat_recsys.interfaces import Artifact, TaskContext
 
 INTERACTION_SCHEMA = pa.schema(
@@ -164,7 +164,7 @@ def _write_canonical_interactions(
     small_path = output_directory / ".interactions-small.parquet"
     temporary.unlink(missing_ok=True)
     small_path.unlink(missing_ok=True)
-    connection = duckdb.connect()
+    connection = connect_for_workspace(output_directory.parent, "canonical-interactions")
     try:
         queries: list[str] = []
         if gh_archive_paths:
@@ -232,7 +232,7 @@ def _write_canonical_repositories(
     small_path = output_directory / ".repositories-small.parquet"
     temporary.unlink(missing_ok=True)
     small_path.unlink(missing_ok=True)
-    connection = duckdb.connect()
+    connection = connect_for_workspace(output_directory.parent, "canonical-repositories")
     try:
         queries: list[str] = []
         if existing is not None:

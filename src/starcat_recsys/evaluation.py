@@ -12,10 +12,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import duckdb
 import pyarrow as pa
 
 from starcat_recsys.artifacts import artifact_for, write_json_atomic
+from starcat_recsys.duckdb_runtime import connect_for_workspace
 from starcat_recsys.interfaces import Artifact, TaskContext
 from starcat_recsys.recommendations import artifact_path, training_dataset
 
@@ -53,12 +53,13 @@ class OfflineEvaluator:
             artifact_path(dataset),
             self._config.split,
             self._config.maximum_subjects,
+            context.workspace,
         )
         seed_repo_ids = {repo_id for history in histories.values() for repo_id in history}
         results = {}
         for model in models:
             model_name = str(model.metadata.get("model", "unknown"))
-            edges = _load_edges(artifact_path(model), seed_repo_ids)
+            edges = _load_edges(artifact_path(model), seed_repo_ids, context.workspace)
             results[model_name] = self._evaluate_model(histories, truths, catalog, edges)
 
         output_directory = context.workspace / "evaluation"
@@ -130,9 +131,12 @@ class OfflineEvaluator:
 
 
 def _load_subject_sets(
-    path: Path, target_split: str, maximum_subjects: int | None = None
+    path: Path,
+    target_split: str,
+    maximum_subjects: int | None = None,
+    workspace: Path | None = None,
 ) -> tuple[dict[str, set[int]], dict[str, set[int]], set[int]]:
-    connection = duckdb.connect()
+    connection = connect_for_workspace(workspace or path.parent, "evaluation-subjects")
     try:
         connection.read_parquet(path.as_posix()).create_view("dataset")
         limit_clause = f"LIMIT {maximum_subjects}" if maximum_subjects is not None else ""
@@ -143,7 +147,7 @@ def _load_subject_sets(
             FROM dataset
             WHERE split = ?
             GROUP BY source_subject_id
-            ORDER BY hash(source_subject_id), source_subject_id
+            ORDER BY md5(source_subject_id), source_subject_id
             {limit_clause}
             """,
             [target_split],
@@ -181,9 +185,11 @@ def _load_subject_sets(
 
 
 def _load_edges(
-    path: Path, source_repo_ids: set[int] | None = None
+    path: Path,
+    source_repo_ids: set[int] | None = None,
+    workspace: Path | None = None,
 ) -> dict[int, list[tuple[int, float]]]:
-    connection = duckdb.connect()
+    connection = connect_for_workspace(workspace or path.parent, "evaluation-edges")
     try:
         connection.read_parquet(path.as_posix()).create_view("model_edges")
         if source_repo_ids is not None:

@@ -19,6 +19,7 @@ from sklearn.decomposition import TruncatedSVD
 from sklearn.neighbors import NearestNeighbors
 
 from starcat_recsys.artifacts import artifact_for
+from starcat_recsys.duckdb_runtime import connect_for_workspace
 from starcat_recsys.interfaces import Artifact, InsufficientTrainingDataError, TaskContext
 from starcat_recsys.recommendations import (
     RECOMMENDATION_SCHEMA,
@@ -63,7 +64,7 @@ class SVDTrainer:
 
     def train(self, context: TaskContext, inputs: list[Artifact]) -> list[Artifact]:
         dataset = training_dataset(inputs)
-        connection = duckdb.connect()
+        connection = connect_for_workspace(context.workspace, self.name)
         try:
             connection.read_parquet(artifact_path(dataset).as_posix()).create_view("dataset")
             self._prepare_values(connection)
@@ -138,7 +139,7 @@ class SVDTrainer:
             SELECT source_subject_id, count(*) AS interaction_count
             FROM svd_candidate_values
             GROUP BY source_subject_id
-            ORDER BY hash(source_subject_id), source_subject_id
+            ORDER BY md5(source_subject_id), source_subject_id
             LIMIT {config.maximum_subjects}
             """
         )
@@ -150,7 +151,7 @@ class SVDTrainer:
                 SELECT
                     source_subject_id,
                     sum(interaction_count) OVER (
-                        ORDER BY hash(source_subject_id), source_subject_id
+                        ORDER BY md5(source_subject_id), source_subject_id
                     ) AS cumulative_interactions
                 FROM svd_subject_candidates
             )

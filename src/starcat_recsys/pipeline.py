@@ -10,7 +10,6 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-import duckdb
 import yaml
 
 from starcat_recsys.artifacts import write_json_atomic
@@ -21,6 +20,7 @@ from starcat_recsys.bundle import (
 )
 from starcat_recsys.canonical import CanonicalNormalizer
 from starcat_recsys.dataset import DatasetConfig, DuckDBDatasetBuilder
+from starcat_recsys.duckdb_runtime import connect_for_workspace
 from starcat_recsys.evaluation import EvaluationConfig, OfflineEvaluator
 from starcat_recsys.executor import LocalExecutor
 from starcat_recsys.interfaces import (
@@ -91,6 +91,7 @@ def run_pipeline(config_path: Path) -> Artifact:
         repo_ids = _repository_ids_from_canonical(
             canonical,
             int(github_config.get("repository_limit", 5_000)),
+            context.workspace,
         )
         connector = _source_connector(github_config, base_directory, repo_ids=repo_ids)
         deferred_artifacts = executor.execute(
@@ -445,14 +446,16 @@ def _git_commit() -> str:
     return result.stdout.strip() if result.returncode == 0 else "unknown"
 
 
-def _repository_ids_from_canonical(inputs: list[Artifact], limit: int) -> list[int]:
+def _repository_ids_from_canonical(
+    inputs: list[Artifact], limit: int, workspace: Path | None = None
+) -> list[int]:
     if limit <= 0:
         raise ValueError("repository_limit 必须大于 0")
     matches = [item for item in inputs if item.kind == "canonical_interactions"]
     if len(matches) != 1:
         raise ValueError("延迟 GitHub metadata 采集需要一个 canonical_interactions")
     path = Path(matches[0].uri.removeprefix("file://"))
-    connection = duckdb.connect()
+    connection = connect_for_workspace(workspace or path.parent, "repository-ranking")
     try:
         rows = connection.execute(
             """

@@ -7,8 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import duckdb
-
+from starcat_recsys.duckdb_runtime import connect_for_workspace
 from starcat_recsys.interfaces import Artifact, TaskContext
 from starcat_recsys.recommendations import (
     artifact_path,
@@ -38,7 +37,7 @@ class PopularTrainer:
 
     def train(self, context: TaskContext, inputs: list[Artifact]) -> list[Artifact]:
         dataset = training_dataset(inputs)
-        connection = duckdb.connect()
+        connection = connect_for_workspace(context.workspace, self.name)
         try:
             connection.read_parquet(artifact_path(dataset).as_posix()).create_view("dataset")
             artifact = write_recommendations_query(

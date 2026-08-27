@@ -9,9 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-import duckdb
-
 from starcat_recsys.domain import parse_datetime
+from starcat_recsys.duckdb_runtime import connect_for_workspace
 from starcat_recsys.interfaces import Artifact, TaskContext
 from starcat_recsys.recommendations import (
     artifact_path,
@@ -68,7 +67,7 @@ class CoStarTrainer:
 
     def train(self, context: TaskContext, inputs: list[Artifact]) -> list[Artifact]:
         dataset = training_dataset(inputs)
-        connection = duckdb.connect()
+        connection = connect_for_workspace(context.workspace, self.name)
         try:
             connection.read_parquet(artifact_path(dataset).as_posix()).create_view("dataset")
             artifact = write_recommendations_query(
@@ -136,7 +135,7 @@ class CoStarTrainer:
                 SELECT
                     source_subject_id,
                     sum(pair_count) OVER (
-                        ORDER BY hash(source_subject_id), source_subject_id
+                        ORDER BY md5(source_subject_id), source_subject_id
                     ) AS cumulative_pair_count
                 FROM subject_pair_counts
             )
