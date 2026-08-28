@@ -29,6 +29,8 @@ def test_builds_latest_public_deduplicated_time_split_dataset(tmp_path: Path) ->
         _interaction("gh:4", "gh", 4, "2025-01-04", "star_event", "2025-10-01"),
         # 相同 source_record_id 只能保留一条。
         _interaction("gh:4", "gh", 4, "2025-01-04", "star_event", "2025-10-01"),
+        # 未进入仓库元数据目录的互动必须在快照选择和窗口去重前被过滤。
+        _interaction("gh:orphan", "gh", 999, "2025-01-05", "star_event", "2025-01-05"),
     ]
     pq.write_table(pa.Table.from_pylist(rows, schema=INTERACTION_SCHEMA), interactions_path)
     repo_rows = [
@@ -63,9 +65,9 @@ def test_builds_latest_public_deduplicated_time_split_dataset(tmp_path: Path) ->
     }
     assert {row["training_eligible"] for row in dataset if row["source"] == "gh_archive"} == {False}
     report = json.loads((tmp_path / "workspace/dataset/quality-report.json").read_text())
-    assert report["input_interaction_rows"] == 9
-    assert report["latest_snapshot_rows"] == 7
-    assert report["deduplicated_rows"] == 6
+    assert report["input_interaction_rows"] == 10
+    assert report["latest_snapshot_rows"] == 6
+    assert report["deduplicated_rows"] == 5
     assert report["public_repository_rows"] == 4
     assert report["unique_subject_repository_rows"] == 4
     assert report["training_eligible_subject_count"] == 1

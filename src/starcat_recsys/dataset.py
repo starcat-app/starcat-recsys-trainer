@@ -153,11 +153,24 @@ class DuckDBDatasetBuilder:
             WHERE row_number = 1
             """
         )
+        # GitHub metadata目录已经定义本轮可训练的公开仓库集合。先用它裁剪十年互动流，
+        # 避免为最终必然丢弃的仓库执行全局快照聚合和窗口去重，显著降低单机 spill。
+        connection.execute(
+            """
+            CREATE TEMP TABLE candidate_source_interactions AS
+            SELECT i.*
+            FROM source_interactions i
+            INNER JOIN latest_repositories r USING (repo_id)
+            WHERE r.visibility = 'public'
+              AND NOT r.archived
+              AND NOT r.disabled
+            """
+        )
         connection.execute(
             """
             CREATE TEMP TABLE latest_snapshot_times AS
             SELECT source_subject_id, max(observed_at) AS observed_at
-            FROM source_interactions
+            FROM candidate_source_interactions
             WHERE relation_type = 'current_star_membership'
             GROUP BY source_subject_id
             """
@@ -166,7 +179,7 @@ class DuckDBDatasetBuilder:
             """
             CREATE TEMP TABLE current_interactions AS
             SELECT i.*
-            FROM source_interactions i
+            FROM candidate_source_interactions i
             LEFT JOIN latest_snapshot_times s
               ON i.source_subject_id = s.source_subject_id
             WHERE i.relation_type <> 'current_star_membership'
