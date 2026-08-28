@@ -11,8 +11,8 @@ from pathlib import Path
 
 import duckdb
 
-DUCKDB_MEMORY_LIMIT = "8GiB"
-DUCKDB_THREADS = 2
+DUCKDB_MEMORY_LIMIT = "4GiB"
+DUCKDB_THREADS = 1
 
 
 def connect_for_workspace(workspace: Path, task_name: str) -> duckdb.DuckDBPyConnection:
@@ -29,8 +29,8 @@ def connect_for_workspace(workspace: Path, task_name: str) -> duckdb.DuckDBPyCon
     connection = duckdb.connect()
     connection.execute(f"SET temp_directory = {_sql_literal(temp_directory)}")
     # DuckDB 默认可使用大部分物理内存；在桌面 Mac 上会与系统和其他应用争抢内存，
-    # 极端情况下触发 swap 占满系统盘。8 GiB 是十年 Dataset 聚合实测可继续运行的
-    # 单机预算；同时把线程限制为 2 并关闭无业务价值的插入顺序保留，减少算子并行内存。
+    # 极端情况下触发 swap 占满系统盘。十年 Dataset 实测 8 GiB / 2 线程仍会快速扩大
+    # macOS swap；因此固定为 4 GiB / 1 线程，用更长运行时间换取桌面机器的系统稳定性。
     connection.execute(f"SET memory_limit = '{DUCKDB_MEMORY_LIMIT}'")
     connection.execute(f"SET threads = {DUCKDB_THREADS}")
     connection.execute("SET preserve_insertion_order = false")

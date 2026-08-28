@@ -25,11 +25,11 @@ def test_connect_for_workspace_binds_temp_directory(tmp_path: Path) -> None:
 
     assert row is not None
     assert Path(str(row[0])) == (tmp_path / "duckdb-temp" / "dataset-build").resolve()
-    assert str(row[1]) == "8.0 GiB"
-    assert int(row[2]) == 2
+    assert str(row[1]) == "4.0 GiB"
+    assert int(row[2]) == 1
     assert row[3] is False
-    assert DUCKDB_MEMORY_LIMIT == "8GiB"
-    assert DUCKDB_THREADS == 2
+    assert DUCKDB_MEMORY_LIMIT == "4GiB"
+    assert DUCKDB_THREADS == 1
 
 
 @pytest.mark.parametrize("task_name", ["", "../escape", "task/name", "task name"])

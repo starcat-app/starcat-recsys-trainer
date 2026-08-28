@@ -253,18 +253,25 @@ class DuckDBDatasetBuilder:
         connection.execute(
             """
             CREATE TEMP TABLE unique_subject_repositories AS
-            SELECT * EXCLUDE (subject_repo_rank)
+            SELECT chosen.*
             FROM (
-                SELECT *, row_number() OVER (
-                    PARTITION BY source, source_subject_id, repo_id
-                    ORDER BY
-                        CASE WHEN relation_type = 'star_event' THEN occurred_at END ASC NULLS LAST,
-                        observed_at DESC,
+                -- arg_min 直接在分组聚合中选择目标行，避免 row_number 为十年互动流
+                -- 生成第二份全局窗口排序；排序键保持“最早 Star、最新快照”的原语义。
+                SELECT arg_min(
+                    i,
+                    row(
+                        CASE
+                            WHEN relation_type = 'star_event' AND occurred_at IS NOT NULL THEN 0
+                            ELSE 1
+                        END,
+                        COALESCE(epoch_us(occurred_at), 9223372036854775807),
+                        -epoch_us(observed_at),
                         source_record_id
-                ) AS subject_repo_rank
-                FROM valid_interactions
+                    )
+                ) AS chosen
+                FROM valid_interactions i
+                GROUP BY source, source_subject_id, repo_id
             )
-            WHERE subject_repo_rank = 1
             """
         )
         connection.execute(
