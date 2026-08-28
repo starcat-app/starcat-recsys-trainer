@@ -15,11 +15,11 @@
 - GitHub Repository REST metadata 采集，支持 ETag cache、请求上限和限流识别。
 - Starcat schema v1 匿名完整 Star 快照校验、HMAC 脱敏和导入。
 - `starcat-collection-api` Admin 导出 Pull，校验响应 checksum、字节上限、schema 和 active 快照唯一性。
-- DuckDB 流式生成 `InteractionRecord` / `RepositoryRecord` Canonical Parquet；十年事件不进入 Python 行对象列表，内存固定限制为 8 GiB、线程数为 2，排序和聚合产生的临时文件写入训练 workspace 下的 `duckdb-temp/`。
+- DuckDB 流式生成 `InteractionRecord` / `RepositoryRecord` Canonical Parquet；十年事件不进入 Python 行对象列表，内存固定限制为 6 GiB、线程数为 1，排序和聚合产生的临时文件写入训练 workspace 下的 `duckdb-temp/`。
 - 最新完整快照选择、同源去重、公开仓库过滤、主体权重和时间切分。
 - train-only 主体权重、subject-repo 唯一隐式反馈和 validation/test 未来数据隔离。
 - Popular、TruncatedSVD、时间衰减 co-star 和两个 ablation 变体。
-- Dataset 稳定主体抽样、Top 仓库目录、co-star pair 预算、SVD 非零项预算和评估主体预算，适配单机全量 Raw 扫描。
+- Dataset 使用全量主体计算仓库支持度和 Top 目录，再在主体-仓库聚合前稳定抽样；配合 co-star pair、SVD 非零项和评估主体预算，适配单机全量 Raw 扫描。
 - 单主体冷启动时明确跳过不满足数学条件的 SVD，继续交付可用的 Popular/co-star。
 - Recall@K、NDCG@K、MRR@K、Coverage 离线评估和指标发布门禁。
 - 不可变本地 Model Registry、SQLite ServingBundle、checksum/quick-check 校验和查询 CLI。

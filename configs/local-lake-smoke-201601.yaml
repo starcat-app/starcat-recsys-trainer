@@ -1,0 +1,54 @@
+# 使用真实本地 Raw 的无网络烟测配置；版本不可覆盖，重跑时同步修改三个 v3 标识。
+run_id: gharchive-smoke-2016-v3
+workspace: /Volumes/T0/Starcat/training/gharchive-smoke-2016-v3
+registry: /Volumes/T0/Starcat/training/registry
+random_seed: 42
+
+sources:
+  - type: local_lake_partitions
+    workspace: /Volumes/T0/Starcat/bigquery/watch-events-2016-2026
+    dataset: watch_events
+    start_date: "2016-01-01"
+    end_date: "2016-12-31"
+    verify_checksums: true
+  - type: local_lake_partitions
+    workspace: /Volumes/T0/Starcat/bigquery/push-events-2016-2026
+    dataset: push_events
+    start_date: "2016-01-01"
+    end_date: "2016-12-31"
+    verify_checksums: true
+
+dataset:
+  train_end: "2016-10-01T00:00:00Z"
+  validation_end: "2016-12-01T00:00:00Z"
+  minimum_repositories_per_subject: 5
+  maximum_repositories_per_subject: 200
+  minimum_repository_interactions: 5
+  maximum_repository_count: 5000
+  subject_sample_rate: 0.02
+
+training:
+  reference_time: "2016-10-01T00:00:00Z"
+  top_k: 20
+  svd_components: 16
+  svd_maximum_interactions: 2000000
+  svd_maximum_subjects: 100000
+  svd_maximum_repositories: 5000
+  svd_neighbor_batch_size: 500
+  half_life_days: 365
+  legacy_time_weight: 0.35
+  shrinkage: 10
+  minimum_support: 2
+  maximum_repositories_per_subject: 100
+  maximum_pair_observations: 10000000
+  run_ablations: false
+
+evaluation:
+  split: validation
+  k: 20
+  maximum_subjects: 2000
+
+publish:
+  model_version: gharchive-smoke-2016-v3
+  selected_model: costar
+  metric_gates: {}

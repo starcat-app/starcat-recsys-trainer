@@ -1,8 +1,9 @@
-run_id: gharchive-local-2016-2026-v12
-workspace: /Volumes/T0/Starcat/training/gharchive-local-2016-2026-v12
+run_id: gharchive-local-2016-2026-v13
+workspace: /Volumes/T0/Starcat/training/gharchive-local-2016-2026-v13
 registry: /Volumes/T0/Starcat/training/registry
 random_seed: 42
-resume_canonical_manifest: /Volumes/T0/Starcat/training/gharchive-local-2016-2026-v10/runs/gharchive-local-2016-2026-v10/canonical/manifest.json
+# 仅在上一 run 已完整生成 Canonical、后续节点失败时启用：
+# resume_canonical_manifest: /Volumes/T0/Starcat/training/<previous>/runs/<previous>/canonical/manifest.json
 
 sources:
   - type: local_lake_partitions
@@ -53,6 +54,6 @@ evaluation:
   maximum_subjects: 10000
 
 publish:
-  model_version: gharchive-local-2016-2026-v12
+  model_version: gharchive-local-2016-2026-v13
   selected_model: costar
   metric_gates: {}
