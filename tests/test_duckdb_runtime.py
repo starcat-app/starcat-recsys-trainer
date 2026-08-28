@@ -25,10 +25,10 @@ def test_connect_for_workspace_binds_temp_directory(tmp_path: Path) -> None:
 
     assert row is not None
     assert Path(str(row[0])) == (tmp_path / "duckdb-temp" / "dataset-build").resolve()
-    assert str(row[1]) == "4.0 GiB"
+    assert str(row[1]) == "6.0 GiB"
     assert int(row[2]) == 1
     assert row[3] is False
-    assert DUCKDB_MEMORY_LIMIT == "4GiB"
+    assert DUCKDB_MEMORY_LIMIT == "6GiB"
     assert DUCKDB_THREADS == 1
 
 

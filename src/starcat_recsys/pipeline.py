@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import subprocess
 from dataclasses import asdict
 from datetime import date, datetime
@@ -12,7 +13,7 @@ from typing import Any
 
 import yaml
 
-from starcat_recsys.artifacts import write_json_atomic
+from starcat_recsys.artifacts import sha256_file, write_json_atomic
 from starcat_recsys.bundle import (
     BundleConfig,
     LocalModelRegistry,
@@ -66,46 +67,56 @@ def run_pipeline(config_path: Path) -> Artifact:
     context.workspace.mkdir(parents=True)
     executor = LocalExecutor()
 
-    raw_artifacts: list[Artifact] = []
-    source_configs = _required_list(document, "sources")
-    deferred_github_configs: list[dict[str, Any]] = []
-    for index, source_config in enumerate(source_configs):
-        if not isinstance(source_config, dict):
-            raise ValueError("sources[] 必须是对象")
-        if source_config.get("type") == "github_api" and bool(
-            source_config.get("repo_ids_from_canonical")
-        ):
-            deferred_github_configs.append(source_config)
-            continue
-        connector = _source_connector(source_config, base_directory)
-        raw_artifacts.extend(
-            executor.execute(
-                f"collect:{index}:{connector.name}", partial(connector.collect, context)
-            )
-        )
-
-    canonical = executor.execute(
-        "normalize", lambda: CanonicalNormalizer().normalize(context, raw_artifacts)
-    )
-    for index, github_config in enumerate(deferred_github_configs):
-        repo_ids = _repository_ids_from_canonical(
-            canonical,
-            int(github_config.get("repository_limit", 5_000)),
-            context.workspace,
-        )
-        connector = _source_connector(github_config, base_directory, repo_ids=repo_ids)
-        deferred_artifacts = executor.execute(
-            f"collect:deferred-github:{index}", partial(connector.collect, context)
-        )
+    resume_manifest_value = document.get("resume_canonical_manifest")
+    if resume_manifest_value is not None:
+        if not isinstance(resume_manifest_value, str) or not resume_manifest_value.strip():
+            raise ValueError("resume_canonical_manifest 必须是非空路径")
+        resume_manifest = _resolve_path(base_directory, resume_manifest_value)
         canonical = executor.execute(
-            "normalize:with-github-metadata",
-            partial(
-                CanonicalNormalizer().normalize,
-                context,
-                deferred_artifacts,
-                existing=canonical,
-            ),
+            "resume:canonical",
+            lambda: _load_canonical_artifacts(context, resume_manifest),
         )
+    else:
+        raw_artifacts: list[Artifact] = []
+        source_configs = _required_list(document, "sources")
+        deferred_github_configs: list[dict[str, Any]] = []
+        for index, source_config in enumerate(source_configs):
+            if not isinstance(source_config, dict):
+                raise ValueError("sources[] 必须是对象")
+            if source_config.get("type") == "github_api" and bool(
+                source_config.get("repo_ids_from_canonical")
+            ):
+                deferred_github_configs.append(source_config)
+                continue
+            connector = _source_connector(source_config, base_directory)
+            raw_artifacts.extend(
+                executor.execute(
+                    f"collect:{index}:{connector.name}", partial(connector.collect, context)
+                )
+            )
+
+        canonical = executor.execute(
+            "normalize", lambda: CanonicalNormalizer().normalize(context, raw_artifacts)
+        )
+        for index, github_config in enumerate(deferred_github_configs):
+            repo_ids = _repository_ids_from_canonical(
+                canonical,
+                int(github_config.get("repository_limit", 5_000)),
+                context.workspace,
+            )
+            connector = _source_connector(github_config, base_directory, repo_ids=repo_ids)
+            deferred_artifacts = executor.execute(
+                f"collect:deferred-github:{index}", partial(connector.collect, context)
+            )
+            canonical = executor.execute(
+                "normalize:with-github-metadata",
+                partial(
+                    CanonicalNormalizer().normalize,
+                    context,
+                    deferred_artifacts,
+                    existing=canonical,
+                ),
+            )
     dataset_config = _required_dict(document, "dataset")
     train_end = _datetime(dataset_config["train_end"])
     validation_end = _datetime(dataset_config["validation_end"])
@@ -259,6 +270,64 @@ def run_pipeline(config_path: Path) -> Artifact:
         },
     )
     return bundle
+
+
+def _load_canonical_artifacts(context: TaskContext, manifest_path: Path) -> list[Artifact]:
+    """校验并复用已完成 run 的 Canonical，避免长任务失败后重扫不可变 Raw。"""
+
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"Canonical manifest 不存在：{manifest_path}")
+    document = json.loads(manifest_path.read_text(encoding="utf-8"))
+    rows = document.get("artifacts")
+    if not isinstance(rows, list):
+        raise ValueError("Canonical manifest 缺少 artifacts[]")
+
+    artifacts: list[Artifact] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("Canonical manifest artifacts[] 必须是对象")
+        kind = row.get("kind")
+        uri = row.get("uri")
+        checksum = row.get("checksum")
+        metadata = row.get("metadata")
+        if not isinstance(kind, str) or not isinstance(uri, str) or not uri.startswith("file://"):
+            raise ValueError("Canonical artifact 的 kind/uri 无效")
+        if not isinstance(checksum, str) or not isinstance(metadata, dict):
+            raise ValueError("Canonical artifact 的 checksum/metadata 无效")
+        path = Path(uri.removeprefix("file://"))
+        if not path.is_file():
+            raise FileNotFoundError(f"Canonical artifact 不存在：{path}")
+        actual_checksum = sha256_file(path)
+        if actual_checksum != checksum:
+            raise ValueError(f"Canonical artifact checksum 不匹配：{path}")
+        artifacts.append(Artifact(kind, uri, checksum, metadata))
+
+    expected_kinds = {"canonical_interactions", "canonical_repositories"}
+    actual_kinds = {artifact.kind for artifact in artifacts}
+    if len(artifacts) != 2 or actual_kinds != expected_kinds:
+        raise ValueError(f"Canonical manifest artifact 类型不完整：{sorted(actual_kinds)}")
+
+    # 新 run 只记录来源和摘要，不复制可能达到数十 GiB 的 Canonical 文件。
+    write_json_atomic(
+        context.workspace / "canonical-resume.json",
+        {
+            "schema_version": 1,
+            "run_id": context.run_id,
+            "source_manifest": manifest_path.resolve().as_uri(),
+            "source_manifest_checksum": sha256_file(manifest_path),
+            "source_run_id": document.get("run_id"),
+            "artifacts": [
+                {
+                    "kind": artifact.kind,
+                    "uri": artifact.uri,
+                    "checksum": artifact.checksum,
+                    "metadata": artifact.metadata,
+                }
+                for artifact in artifacts
+            ],
+        },
+    )
+    return artifacts
 
 
 def _source_connector(

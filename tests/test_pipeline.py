@@ -118,6 +118,29 @@ def test_runs_end_to_end_pipeline_and_cli_query(tmp_path: Path, capsys: object) 
     with pytest.raises(FileExistsError, match="run_id 已存在"):
         run_pipeline(config_path)
 
+    # 长任务后续阶段失败时，可以校验并复用已落盘 Canonical，而不重复采集与标准化。
+    resume_config = {
+        **config,
+        "run_id": "resume-run",
+        "workspace": "resume-workspace",
+        "resume_canonical_manifest": (
+            tmp_path / "workspace/runs/demo-run/canonical/manifest.json"
+        ).as_posix(),
+        "sources": [],
+        "publish": {"model_version": "demo-v2", "selected_model": "costar"},
+    }
+    resume_config_path = tmp_path / "resume-pipeline.yaml"
+    resume_config_path.write_text(yaml.safe_dump(resume_config, sort_keys=False))
+
+    resumed_artifact = run_pipeline(resume_config_path)
+
+    assert Path(resumed_artifact.metadata["bundle_uri"].removeprefix("file://")).is_dir()
+    resume_manifest = json.loads(
+        (tmp_path / "resume-workspace/runs/resume-run/run-manifest.json").read_text()
+    )
+    assert resume_manifest["tasks"][0]["task_name"] == "resume:canonical"
+    assert (tmp_path / "resume-workspace/runs/resume-run/canonical-resume.json").is_file()
+
 
 def test_single_subject_skips_svd_and_publishes_costar_bundle(tmp_path: Path) -> None:
     interactions = tmp_path / "interactions.jsonl"

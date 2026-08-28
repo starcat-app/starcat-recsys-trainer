@@ -1,7 +1,8 @@
-run_id: gharchive-local-2016-2026-v10
-workspace: /Volumes/T0/Starcat/training/gharchive-local-2016-2026-v10
+run_id: gharchive-local-2016-2026-v11
+workspace: /Volumes/T0/Starcat/training/gharchive-local-2016-2026-v11
 registry: /Volumes/T0/Starcat/training/registry
 random_seed: 42
+resume_canonical_manifest: /Volumes/T0/Starcat/training/gharchive-local-2016-2026-v10/runs/gharchive-local-2016-2026-v10/canonical/manifest.json
 
 sources:
   - type: local_lake_partitions
@@ -52,6 +53,6 @@ evaluation:
   maximum_subjects: 10000
 
 publish:
-  model_version: gharchive-local-2016-2026-v10
+  model_version: gharchive-local-2016-2026-v11
   selected_model: costar
   metric_gates: {}
