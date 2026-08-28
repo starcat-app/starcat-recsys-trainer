@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -57,8 +58,22 @@ def test_publishes_verifies_and_queries_immutable_bundle(
     bundle = Path(artifact.metadata["bundle_uri"].removeprefix("file://"))
     manifest = verify_bundle(bundle)
     assert manifest["git_commit"] == "abc"
+    with sqlite3.connect(bundle / "recommendations.sqlite") as database:
+        calibrated = database.execute(
+            """
+            SELECT score, display_score
+            FROM recommendations
+            ORDER BY score
+            """
+        ).fetchall()
+    assert [row[0] for row in calibrated] == pytest.approx([0.4, 0.7, 0.8])
+    assert [row[1] for row in calibrated] == pytest.approx([1 / 3, 2 / 3, 0.99])
+    single_seed_results = query_bundle(bundle, [1], limit=2)
+    assert single_seed_results[0]["score"] == pytest.approx(0.8)
+    assert single_seed_results[0]["display_score"] == pytest.approx(0.99)
     results = query_bundle(bundle, [1, 2], limit=2)
     assert [row["repo_id"] for row in results] == [3]
+    assert results[0]["display_score"] is None
     assert json.loads((tmp_path / "registry/active.json").read_text())["model_version"] == "v1"
     with pytest.raises(FileExistsError):
         publisher.publish(

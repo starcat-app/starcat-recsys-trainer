@@ -178,6 +178,9 @@ def query_bundle(
     excluded = set(seed_repo_ids) | set(exclude_repo_ids or [])
     placeholders = ",".join("?" for _ in seed_repo_ids)
     excluded_placeholders = ",".join("?" for _ in excluded)
+    # 百分位只校准单条 item-to-item 边。多 seed 会叠加正负权重，已经不再服从
+    # 训练时的单边分布，因此明确返回 NULL，避免伪造可比较的展示分。
+    display_score_expression = "max(r.display_score)" if len(seed_repo_ids) == 1 else "NULL"
     query = f"""
         SELECT
             r.target_repo_id AS repo_id,
@@ -185,6 +188,7 @@ def query_bundle(
             p.description,
             p.primary_language,
             sum(r.score) AS score,
+            {display_score_expression} AS display_score,
             min(r.rank) AS best_rank,
             min(r.signals) AS signals
         FROM recommendations r
@@ -222,6 +226,7 @@ def _build_database(database_path: Path, model_path: Path, repository_path: Path
                 source_repo_id INTEGER NOT NULL,
                 target_repo_id INTEGER NOT NULL,
                 score REAL NOT NULL,
+                display_score REAL NOT NULL CHECK(display_score >= 0 AND display_score <= 1),
                 rank INTEGER NOT NULL,
                 model TEXT NOT NULL,
                 signals TEXT NOT NULL,
@@ -250,11 +255,14 @@ def _build_database(database_path: Path, model_path: Path, repository_path: Path
             )
         for batch in pq.ParquetFile(model_path).iter_batches(batch_size=50_000):
             database.executemany(
-                "INSERT INTO recommendations VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO recommendations VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     (
                         row["source_repo_id"],
                         row["target_repo_id"],
+                        row["score"],
+                        # 先写原始分，全部公开边落库并完成边界清理后再统一校准。
+                        # 这样无需把全部模型行加载进 Python 内存。
                         row["score"],
                         row["rank"],
                         row["model"],
@@ -270,6 +278,30 @@ def _build_database(database_path: Path, model_path: Path, repository_path: Path
             DELETE FROM recommendations
             WHERE source_repo_id NOT IN (SELECT repo_id FROM repositories)
                OR target_repo_id NOT IN (SELECT repo_id FROM repositories)
+            """
+        )
+        # 原始 co-star 分数与 SimRepo/Qdrant 的向量分数不在同一尺度。使用最终
+        # ServingBundle 内全部有效边的经验累积分布做单调校准：排序保持不变，
+        # 0.05 这类全局高分边会显示为其真实模型百分位。最高值封顶 0.99，避免
+        # UI 把有限样本中的第一名表达成绝对的“100% 匹配”。
+        database.executescript(
+            """
+            CREATE TEMP TABLE recommendation_display_scores AS
+            SELECT
+                source_repo_id,
+                target_repo_id,
+                min(0.99, cume_dist() OVER (ORDER BY score)) AS display_score
+            FROM recommendations;
+
+            UPDATE recommendations
+            SET display_score = (
+                SELECT calibrated.display_score
+                FROM recommendation_display_scores calibrated
+                WHERE calibrated.source_repo_id = recommendations.source_repo_id
+                  AND calibrated.target_repo_id = recommendations.target_repo_id
+            );
+
+            DROP TABLE recommendation_display_scores;
             """
         )
 
