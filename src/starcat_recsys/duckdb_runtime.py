@@ -11,6 +11,8 @@ from pathlib import Path
 
 import duckdb
 
+DUCKDB_MEMORY_LIMIT = "4GiB"
+
 
 def connect_for_workspace(workspace: Path, task_name: str) -> duckdb.DuckDBPyConnection:
     """创建临时文件受控的内存 DuckDB 连接。
@@ -25,6 +27,10 @@ def connect_for_workspace(workspace: Path, task_name: str) -> duckdb.DuckDBPyCon
     temp_directory.mkdir(parents=True, exist_ok=True)
     connection = duckdb.connect()
     connection.execute(f"SET temp_directory = {_sql_literal(temp_directory)}")
+    # DuckDB 默认可使用大部分物理内存；在桌面 Mac 上会与系统和其他应用争抢内存，
+    # 极端情况下触发 swap 占满系统盘。固定 4 GiB 后，超出预算的数据继续 spill 到
+    # 上面已经绑定的外置盘 workspace，牺牲少量速度换取单机长期任务的可预测性。
+    connection.execute(f"SET memory_limit = '{DUCKDB_MEMORY_LIMIT}'")
     return connection
 
 
