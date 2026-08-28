@@ -1,5 +1,5 @@
-run_id: gharchive-local-2016-2026-v11
-workspace: /Volumes/T0/Starcat/training/gharchive-local-2016-2026-v11
+run_id: gharchive-local-2016-2026-v12
+workspace: /Volumes/T0/Starcat/training/gharchive-local-2016-2026-v12
 registry: /Volumes/T0/Starcat/training/registry
 random_seed: 42
 resume_canonical_manifest: /Volumes/T0/Starcat/training/gharchive-local-2016-2026-v10/runs/gharchive-local-2016-2026-v10/canonical/manifest.json
@@ -28,7 +28,7 @@ dataset:
   maximum_repositories_per_subject: 200
   minimum_repository_interactions: 20
   maximum_repository_count: 5000
-  # 全量 Raw 都会扫描和去重；这里只对进入单机训练的主体做稳定哈希抽样。
+  # 仓库支持度使用全量主体；进入主体-仓库聚合前再做稳定哈希抽样。
   subject_sample_rate: 0.02
 
 training:
@@ -53,6 +53,6 @@ evaluation:
   maximum_subjects: 10000
 
 publish:
-  model_version: gharchive-local-2016-2026-v11
+  model_version: gharchive-local-2016-2026-v12
   selected_model: costar
   metric_gates: {}

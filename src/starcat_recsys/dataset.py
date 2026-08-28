@@ -134,11 +134,12 @@ class DuckDBDatasetBuilder:
         maximum_repository_count = self._config.maximum_repository_count
         # DuckDB hash() 的实现不承诺跨版本稳定；固定长度 MD5 前缀按字典序比较，才能让
         # 相同配置在依赖小版本升级后仍选择同一批 source-local subject。
-        subject_sample_predicate = ""
+        subject_sample_filter = ""
         if self._config.subject_sample_rate < 1:
             threshold = int(self._config.subject_sample_rate * (1 << 64))
-            subject_sample_predicate = (
-                f"AND substr(md5(source || ':' || source_subject_id), 1, 16) < '{threshold:016x}'"
+            subject_sample_filter = (
+                "WHERE substr(md5(i.source || ':' || i.source_subject_id), 1, 16) "
+                f"< '{threshold:016x}'"
             )
         connection.execute(
             """
@@ -242,12 +243,15 @@ class DuckDBDatasetBuilder:
             {repository_limit_predicate}
             """
         )
+        # 仓库支持度和 Top N 已使用全量主体计算完成；此后提前应用与最终数据集相同的
+        # 稳定抽样，避免为最终会被丢弃的主体构建数亿个主体-仓库聚合状态。
         connection.execute(
-            """
+            f"""
             CREATE TEMP TABLE valid_interactions AS
             SELECT i.*
             FROM deduplicated_interactions i
             INNER JOIN valid_repositories r USING (repo_id)
+            {subject_sample_filter}
             """
         )
         connection.execute(
@@ -297,7 +301,6 @@ class DuckDBDatasetBuilder:
             FROM subject_statistics
             WHERE total_repo_count >= {minimum}
               {maximum_predicate}
-              {subject_sample_predicate}
             """
         )
         connection.execute(

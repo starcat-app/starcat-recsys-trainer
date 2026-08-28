@@ -224,13 +224,15 @@ def test_deterministically_samples_subjects(tmp_path: Path) -> None:
         subject_sample_rate=0.1,
     )
 
-    first, _ = _build_dataset_with_config(tmp_path / "first", rows, config)
+    first, first_repositories = _build_dataset_with_config(tmp_path / "first", rows, config)
     second, _ = _build_dataset_with_config(tmp_path / "second", rows, config)
 
     first_subjects = {row["source_subject_id"] for row in first}
     second_subjects = {row["source_subject_id"] for row in second}
     assert first_subjects == second_subjects
     assert 0 < len(first_subjects) < 100
+    # 仓库支持数仍必须使用抽样前的全量主体，抽样只裁剪昂贵的主体-仓库聚合。
+    assert {row["training_stargazer_count"] for row in first_repositories} == {100}
 
 
 def test_rejects_inconsistent_dataset_activity_filters() -> None:
