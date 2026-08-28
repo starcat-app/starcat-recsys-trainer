@@ -4,7 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from starcat_recsys.duckdb_runtime import DUCKDB_MEMORY_LIMIT, connect_for_workspace
+from starcat_recsys.duckdb_runtime import (
+    DUCKDB_MEMORY_LIMIT,
+    DUCKDB_THREADS,
+    connect_for_workspace,
+)
 
 
 def test_connect_for_workspace_binds_temp_directory(tmp_path: Path) -> None:
@@ -13,15 +17,19 @@ def test_connect_for_workspace_binds_temp_directory(tmp_path: Path) -> None:
     connection = connect_for_workspace(tmp_path, "dataset-build")
     try:
         row = connection.execute(
-            "SELECT current_setting('temp_directory'), current_setting('memory_limit')"
+            "SELECT current_setting('temp_directory'), current_setting('memory_limit'), "
+            "current_setting('threads'), current_setting('preserve_insertion_order')"
         ).fetchone()
     finally:
         connection.close()
 
     assert row is not None
     assert Path(str(row[0])) == (tmp_path / "duckdb-temp" / "dataset-build").resolve()
-    assert str(row[1]) == "4.0 GiB"
-    assert DUCKDB_MEMORY_LIMIT == "4GiB"
+    assert str(row[1]) == "8.0 GiB"
+    assert int(row[2]) == 4
+    assert row[3] is False
+    assert DUCKDB_MEMORY_LIMIT == "8GiB"
+    assert DUCKDB_THREADS == 4
 
 
 @pytest.mark.parametrize("task_name", ["", "../escape", "task/name", "task name"])
