@@ -362,6 +362,10 @@ run_worker() {
 
   local child_pid
   local quota_pid
+  local append_args=()
+  if [[ "$APPEND_EXISTING" == "true" ]]; then
+    append_args+=(--append-existing)
+  fi
   /usr/bin/env PYTHONUNBUFFERED=1 GOOGLE_CLOUD_PROJECT="$BILLING_PROJECT" \
     /usr/bin/caffeinate -ims \
     "$CLI" bigquery "$COMMAND_NAME" \
@@ -373,6 +377,7 @@ run_worker() {
     --maximum-total-bytes-billed "$MAXIMUM_TOTAL_BYTES" \
     --location "$LOCATION" \
     --run-id "$RUN_ID" \
+    "${append_args[@]}" \
     >>"$LOG_FILE" 2>&1 &
   child_pid=$!
   printf '%s\n' "$child_pid" >"$PID_FILE"

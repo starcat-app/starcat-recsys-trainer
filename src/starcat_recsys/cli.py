@@ -42,6 +42,11 @@ def _add_daily_download_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--retry-attempts", type=int, default=5)
     parser.add_argument("--retry-initial-delay-seconds", type=float, default=1.0)
     parser.add_argument("--run-id", required=True)
+    parser.add_argument(
+        "--append-existing",
+        action="store_true",
+        help="只校验请求日期，并连续追加到同一 checkpoint",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -191,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
                 location=arguments.location,
                 retry_attempts=arguments.retry_attempts,
                 retry_initial_delay_seconds=arguments.retry_initial_delay_seconds,
+                append_existing=arguments.append_existing,
             )
         ).collect(
             TaskContext(

@@ -89,6 +89,19 @@ uv run starcat-recsys lake inspect-push-events \
 
 脚本通过 `screen + caffeinate` 在后台运行并阻止 macOS 自动休眠，不依赖 `launchd`。停止或重启使用 `stop` / `restart`。两个任务分别使用 `/Volumes/T0/Starcat/bigquery/watch-events-2016-2026` 和 `push-events-2016-2026`，不会共用 Parquet 或 checkpoint。脚本只允许在 `/Volumes/T0` 已真实挂载时启动，避免移动硬盘掉线后误写本机磁盘。每 30 分钟记录当前 GCP Project 的月度 BigQuery 计费量，达到 80% 警告、90% 停止对应下载任务；启动时额度查询失败也会拒绝运行。阈值和间隔可通过 `STARCAT_BQ_QUOTA_WARNING_PERCENT`、`STARCAT_BQ_QUOTA_STOP_PERCENT`、`STARCAT_BQ_QUOTA_LOG_INTERVAL_SECONDS` 覆盖。相同任务可安全续传，已通过 Parquet footer 和 SHA-256 校验的日期不会再次查询。
 
+首次全量完成后，使用 append 模式把下一 UTC 日连续写入同一个 Raw 与 checkpoint；它只
+校验请求日期，不会重新读取十年分区：
+
+```bash
+STARCAT_WATCH_START_DATE=2026-08-26 \
+STARCAT_WATCH_END_DATE=2026-08-26 \
+STARCAT_WATCH_APPEND_EXISTING=true \
+./scripts/download-watch-events.sh start
+```
+
+append 允许重放已覆盖日期或追加当前水位的下一天；跳日、修改预算、Location 或 `run_id`
+都会被拒绝。
+
 ## 管道结构
 
 ```text

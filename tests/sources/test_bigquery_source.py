@@ -149,6 +149,70 @@ def test_resumes_verified_partitions_without_querying_again(tmp_path: Path) -> N
     assert resumed_gateway.fetches == []
 
 
+def test_appends_next_day_without_rescanning_existing_partitions(tmp_path: Path) -> None:
+    initial = BigQueryConfig(
+        billing_project="starcat-test",
+        start_date=date(2026, 8, 22),
+        end_date=date(2026, 8, 22),
+        maximum_bytes_billed_per_day=1000,
+        maximum_total_bytes_billed=2000,
+    )
+    BigQueryWatchEventSource(initial, FakeGateway({"20260822": 100})).collect(
+        make_context(tmp_path)
+    )
+
+    append = BigQueryConfig(
+        billing_project="starcat-test",
+        start_date=date(2026, 8, 23),
+        end_date=date(2026, 8, 23),
+        maximum_bytes_billed_per_day=1000,
+        maximum_total_bytes_billed=2000,
+        append_existing=True,
+    )
+    gateway = FakeGateway({"20260823": 200})
+    artifacts = BigQueryWatchEventSource(append, gateway).collect(make_context(tmp_path))
+
+    assert len(artifacts) == 1
+    assert gateway.estimate_calls == ["20260823"]
+    assert gateway.fetches == [("20260823", 1000)]
+    state = json.loads((tmp_path / "raw" / "gh_archive" / "download-state.json").read_text())
+    assert state["scope"]["start_date"] == "2026-08-22"
+    assert state["scope"]["end_date"] == "2026-08-23"
+    assert state["estimated_total_bytes"] == 300
+    assert sorted(state["completed_partitions"]) == ["20260822", "20260823"]
+    manifest = json.loads((tmp_path / "raw" / "gh_archive" / "manifest.json").read_text())
+    assert len(manifest["partitions"]) == 2
+
+    replay_gateway = FakeGateway({})
+    BigQueryWatchEventSource(append, replay_gateway).collect(make_context(tmp_path))
+    assert replay_gateway.estimate_calls == []
+    assert replay_gateway.fetches == []
+
+
+def test_append_rejects_date_gap(tmp_path: Path) -> None:
+    initial = BigQueryConfig(
+        billing_project="starcat-test",
+        start_date=date(2026, 8, 22),
+        end_date=date(2026, 8, 22),
+        maximum_bytes_billed_per_day=1000,
+    )
+    BigQueryWatchEventSource(initial, FakeGateway({"20260822": 100})).collect(
+        make_context(tmp_path)
+    )
+    append = BigQueryConfig(
+        billing_project="starcat-test",
+        start_date=date(2026, 8, 24),
+        end_date=date(2026, 8, 24),
+        maximum_bytes_billed_per_day=1000,
+        append_existing=True,
+    )
+
+    with pytest.raises(RuntimeError, match="紧邻当前水位"):
+        BigQueryWatchEventSource(append, FakeGateway({"20260824": 100})).collect(
+            make_context(tmp_path)
+        )
+
+
 def test_redownloads_partition_when_checkpoint_checksum_mismatches(tmp_path: Path) -> None:
     config = BigQueryConfig(
         billing_project="starcat-test",

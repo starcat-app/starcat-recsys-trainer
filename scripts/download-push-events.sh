@@ -15,6 +15,7 @@ readonly END_DATE="${STARCAT_PUSH_END_DATE:-2026-08-25}"
 readonly MAXIMUM_BYTES_PER_DAY="${STARCAT_PUSH_MAXIMUM_BYTES_PER_DAY:-2147483648}"
 readonly MAXIMUM_TOTAL_BYTES="${STARCAT_PUSH_MAXIMUM_TOTAL_BYTES:-800000000000}"
 readonly RUN_ID="${STARCAT_PUSH_RUN_ID:-gharchive-push-2016-2026}"
+readonly APPEND_EXISTING="${STARCAT_PUSH_APPEND_EXISTING:-false}"
 readonly STATE_RELATIVE_PATH="raw/gh_archive_push_events/download-state.json"
 readonly PID_BASENAME="starcat-push-events"
 

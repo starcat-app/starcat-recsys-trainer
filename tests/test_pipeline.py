@@ -349,6 +349,7 @@ def test_download_watch_events_cli_reports_summary(
                 "2000",
                 "--run-id",
                 "watch-test",
+                "--append-existing",
             ]
         )
         == 0
@@ -358,6 +359,7 @@ def test_download_watch_events_cli_reports_summary(
     assert output["partition_count"] == 1
     assert output["row_count"] == 123
     assert captured[0][0].maximum_total_bytes_billed == 2_000
+    assert captured[0][0].append_existing is True
     assert captured[0][1].run_id == "watch-test"
 
 

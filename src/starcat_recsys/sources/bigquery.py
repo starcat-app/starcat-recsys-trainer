@@ -69,6 +69,7 @@ class BigQueryConfig:
     maximum_total_bytes_billed: int | None = None
     retry_attempts: int = 5
     retry_initial_delay_seconds: float = 1.0
+    append_existing: bool = False
 
     def __post_init__(self) -> None:
         if not self.billing_project:
@@ -156,11 +157,15 @@ class BigQueryDailyEventSource:
         output_directory = context.workspace / "raw" / self.output_directory_name
         output_directory.mkdir(parents=True, exist_ok=True)
         state_path = output_directory / "download-state.json"
-        state_scope = self._state_scope(context)
-        completed = _load_download_state(state_path, state_scope)
+        requested_scope = self._state_scope(context)
+        completed, stored_estimated_bytes, state_scope = _load_download_state(
+            state_path,
+            requested_scope,
+            append_existing=self._config.append_existing,
+        )
         artifacts: list[Artifact] = []
         partitions: list[dict[str, Any]] = []
-        estimated_total_bytes = 0
+        estimated_total_bytes = stored_estimated_bytes if self._config.append_existing else 0
         dates = _date_range(self._config.start_date, self._config.end_date)
 
         for index, current_date in enumerate(dates, start=1):
@@ -174,8 +179,9 @@ class BigQueryDailyEventSource:
                 self.event_label,
             ):
                 artifact = _artifact_from_state(path, saved)
-                estimated_total_bytes += int(artifact.metadata["estimated_bytes"])
-                self._enforce_total_budget(estimated_total_bytes)
+                if not self._config.append_existing:
+                    estimated_total_bytes += int(artifact.metadata["estimated_bytes"])
+                    self._enforce_total_budget(estimated_total_bytes)
                 artifacts.append(artifact)
                 partitions.append(
                     {"partition": suffix, **artifact.metadata, "checksum": artifact.checksum}
@@ -280,18 +286,30 @@ class BigQueryDailyEventSource:
             }
             _write_download_state(state_path, state_scope, completed, estimated_total_bytes)
 
+        manifest_partitions = partitions
+        if self._config.append_existing:
+            # append 只校验请求日期，不应为了重写 manifest 再读取十年 Raw；历史分区直接
+            # 使用已经过校验的 checkpoint 元数据重建目录。
+            manifest_partitions = [
+                {
+                    "partition": suffix,
+                    **saved["metadata"],
+                    "checksum": saved["checksum"],
+                }
+                for suffix, saved in sorted(completed.items())
+            ]
         write_json_atomic(
             output_directory / "manifest.json",
             {
                 "schema_version": 1,
                 "source": self.name,
                 "run_id": context.run_id,
-                "start_date": self._config.start_date.isoformat(),
-                "end_date": self._config.end_date.isoformat(),
+                "start_date": state_scope["start_date"],
+                "end_date": state_scope["end_date"],
                 "maximum_bytes_billed_per_day": self._config.maximum_bytes_billed_per_day,
                 "maximum_total_bytes_billed": self._config.maximum_total_bytes_billed,
                 "estimated_total_bytes": estimated_total_bytes,
-                "partitions": partitions,
+                "partitions": manifest_partitions,
             },
         )
         return artifacts
@@ -413,21 +431,61 @@ def _is_missing_day_table(error: google_exceptions.NotFound, suffix: str) -> boo
     return expected_table in str(error)
 
 
-def _load_download_state(path: Path, expected_scope: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """读取严格绑定当前任务范围的 checkpoint；损坏状态不能静默忽略。"""
+def _load_download_state(
+    path: Path,
+    expected_scope: dict[str, Any],
+    *,
+    append_existing: bool = False,
+) -> tuple[dict[str, dict[str, Any]], int, dict[str, Any]]:
+    """读取 checkpoint；append 只允许连续向后扩展日期，其他任务语义必须一致。"""
 
     if not path.exists():
-        return {}
+        return {}, 0, expected_scope
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise RuntimeError(f"无法读取 BigQuery 下载状态：{path}") from error
-    if document.get("schema_version") != 1 or document.get("scope") != expected_scope:
+    stored_scope = document.get("scope")
+    if document.get("schema_version") != 1 or not isinstance(stored_scope, dict):
+        raise RuntimeError("BigQuery 下载状态与当前任务范围不一致")
+    effective_scope = expected_scope
+    if append_existing:
+        stable_keys = {
+            "run_id",
+            "maximum_bytes_billed_per_day",
+            "maximum_total_bytes_billed",
+            "location",
+        }
+        if any(stored_scope.get(key) != expected_scope.get(key) for key in stable_keys):
+            raise RuntimeError("BigQuery 下载状态与当前任务范围不一致")
+        try:
+            stored_start = date.fromisoformat(str(stored_scope["start_date"]))
+            stored_end = date.fromisoformat(str(stored_scope["end_date"]))
+            requested_start = date.fromisoformat(str(expected_scope["start_date"]))
+            requested_end = date.fromisoformat(str(expected_scope["end_date"]))
+        except (KeyError, ValueError) as error:
+            raise RuntimeError("BigQuery 下载状态日期范围无效") from error
+        # 允许安全重放已覆盖日期或从当前水位的下一天继续；禁止跳日和向前扩展。
+        if requested_start < stored_start or requested_start > stored_end + timedelta(days=1):
+            raise RuntimeError("BigQuery append 日期必须已覆盖或紧邻当前水位")
+        effective_scope = {
+            **stored_scope,
+            "end_date": max(stored_end, requested_end).isoformat(),
+        }
+    elif stored_scope != expected_scope:
         raise RuntimeError("BigQuery 下载状态与当前任务范围不一致")
     completed = document.get("completed_partitions")
     if not isinstance(completed, dict):
         raise RuntimeError("BigQuery 下载状态缺少 completed_partitions")
-    return {str(key): value for key, value in completed.items() if isinstance(value, dict)}
+    try:
+        estimated_total_bytes = int(document.get("estimated_total_bytes", 0))
+    except (TypeError, ValueError) as error:
+        raise RuntimeError("BigQuery 下载状态累计扫描量无效") from error
+    return (
+        {str(key): value for key, value in completed.items() if isinstance(value, dict)},
+        estimated_total_bytes,
+        effective_scope,
+    )
 
 
 def _write_download_state(
