@@ -8,7 +8,7 @@ Python 模块中，避免 LaunchAgent 或 shell 因本地时区、断点状态�
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -49,7 +49,9 @@ def plan_watch_catch_up(
     if completed_dates[0] != initial_date or len(completed_dates) != expected_count:
         raise RuntimeError("WatchEvent checkpoint 已完成分区不连续")
 
-    latest_complete = (today_utc or date.today()) - timedelta(days=1)
+    # 本机位于 UTC+8 时，本地零点后的 UTC 日期仍可能是前一天；必须显式使用 UTC，
+    # 否则无人值守任务会把尚未结束的 UTC 当天误判成完整分区。
+    latest_complete = (today_utc or datetime.now(UTC).date()) - timedelta(days=1)
     target = target_date or latest_complete
     if target > latest_complete:
         raise RuntimeError("WatchEvent 追赶目标不能晚于最新完整 UTC 日")
