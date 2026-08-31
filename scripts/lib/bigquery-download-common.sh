@@ -21,6 +21,7 @@ usage() {
   ./scripts/$(basename "$SCRIPT_PATH") start    启动后台下载
   ./scripts/$(basename "$SCRIPT_PATH") stop     停止后台下载
   ./scripts/$(basename "$SCRIPT_PATH") restart  重新启动后台下载
+  ./scripts/$(basename "$SCRIPT_PATH") catch-up 连续补齐到最新完整 UTC 日
   ./scripts/$(basename "$SCRIPT_PATH") status   查看进程、checkpoint 和额度
   ./scripts/$(basename "$SCRIPT_PATH") logs     持续查看日志
 
@@ -362,8 +363,11 @@ run_worker() {
 
   local child_pid
   local quota_pid
+  local run_start_date="${1:-$START_DATE}"
+  local run_end_date="${2:-$END_DATE}"
+  local run_append_existing="${3:-$APPEND_EXISTING}"
   local append_args=()
-  if [[ "$APPEND_EXISTING" == "true" ]]; then
+  if [[ "$run_append_existing" == "true" ]]; then
     append_args+=(--append-existing)
   fi
   /usr/bin/env PYTHONUNBUFFERED=1 GOOGLE_CLOUD_PROJECT="$BILLING_PROJECT" \
@@ -371,8 +375,8 @@ run_worker() {
     "$CLI" bigquery "$COMMAND_NAME" \
     --workspace "$WORKSPACE" \
     --billing-project "$BILLING_PROJECT" \
-    --start-date "$START_DATE" \
-    --end-date "$END_DATE" \
+    --start-date "$run_start_date" \
+    --end-date "$run_end_date" \
     --maximum-bytes-billed-per-day "$MAXIMUM_BYTES_PER_DAY" \
     --maximum-total-bytes-billed "$MAXIMUM_TOTAL_BYTES" \
     --location "$LOCATION" \
@@ -400,7 +404,74 @@ run_worker() {
   /bin/kill -TERM "$quota_pid" 2>/dev/null || true
   wait "$quota_pid" 2>/dev/null || true
   set -e
-  exit "$exit_code"
+  return "$exit_code"
+}
+
+catch_up_download() {
+  if [[ "${CATCH_UP_ENABLED:-false}" != "true" ]]; then
+    echo "错误：$EVENT_LABEL 尚未开放每日追赶入口。" >&2
+    return 2
+  fi
+  require_external_mount
+  require_runtime
+  /bin/mkdir -p "$WORKSPACE" "$(dirname "$LOG_FILE")"
+  if is_running; then
+    echo "错误：下载任务正在运行，不能同时执行每日追赶：$SESSION_NAME" >&2
+    return 1
+  fi
+
+  local target_args=()
+  if [[ -n "${CATCH_UP_TARGET_DATE:-}" ]]; then
+    target_args+=(--target-date "$CATCH_UP_TARGET_DATE")
+  fi
+  local plan
+  plan="$(
+    "$CLI" bigquery plan-watch-events-catch-up \
+      --workspace "$WORKSPACE" \
+      "${target_args[@]}"
+  )"
+  local status start_date end_date pending_days
+  IFS=$'\t' read -r status start_date end_date pending_days <<<"$(
+    "$REPO_ROOT/.venv/bin/python" - "$plan" <<'PY'
+import json
+import sys
+
+document = json.loads(sys.argv[1])
+print("\t".join([
+    str(document.get("status", "")),
+    str(document.get("start_date", "")),
+    str(document.get("end_date", "")),
+    str(document.get("pending_days", 0)),
+]))
+PY
+  )"
+  if [[ "$status" == "no_work" ]]; then
+    printf '%s INFO [%s] 已是最新完整 UTC 日，无需下载。\n' \
+      "$(date '+%F %T')" "$EVENT_LABEL" | /usr/bin/tee -a "$LOG_FILE"
+    return 0
+  fi
+  if [[ "$status" != "pending" || -z "$start_date" || -z "$end_date" ]]; then
+    echo "错误：WatchEvent 追赶计划无效。" >&2
+    return 1
+  fi
+
+  local quota_exit_code
+  set +e
+  quota_check
+  quota_exit_code=$?
+  set -e
+  if [[ "$quota_exit_code" -eq 3 ]]; then
+    echo "错误：BigQuery 月度用量已达到停止阈值，拒绝追赶 $EVENT_LABEL。" >&2
+    return 1
+  elif [[ "$quota_exit_code" -ne 0 ]]; then
+    echo "错误：无法读取 BigQuery 月度额度，拒绝追赶 $EVENT_LABEL。" >&2
+    return 1
+  fi
+
+  printf '%s INFO [%s] 开始追赶 %s 至 %s，共 %s 天。\n' \
+    "$(date '+%F %T')" "$EVENT_LABEL" "$start_date" "$end_date" "$pending_days" \
+    | /usr/bin/tee -a "$LOG_FILE"
+  run_worker "$start_date" "$end_date" true
 }
 
 restart_download() {
@@ -430,6 +501,9 @@ bigquery_download_main() {
       else
         restart_download
       fi
+      ;;
+    catch-up)
+      catch_up_download
       ;;
     status)
       if [[ "${2:-}" == "--json" ]]; then

@@ -27,6 +27,7 @@ from starcat_recsys.lake_catalog import inspect_bigquery_dataset
 from starcat_recsys.pipeline import run_pipeline
 from starcat_recsys.sources.bigquery import BigQueryConfig, BigQueryWatchEventSource
 from starcat_recsys.sources.bigquery_push import BigQueryPushEventSource
+from starcat_recsys.watch_catchup import plan_watch_catch_up
 
 
 def _add_daily_download_arguments(parser: argparse.ArgumentParser) -> None:
@@ -71,6 +72,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="按 UTC 日分区下载精简 PushEvent，支持断点续传",
     )
     _add_daily_download_arguments(download_push)
+    plan_watch_catch_up_command = bigquery_commands.add_parser(
+        "plan-watch-events-catch-up",
+        help="根据 checkpoint 计算 WatchEvent 到最新完整 UTC 日的追赶范围",
+    )
+    plan_watch_catch_up_command.add_argument("--workspace", type=Path, required=True)
+    plan_watch_catch_up_command.add_argument("--target-date", type=date.fromisoformat)
     quota_usage = bigquery_commands.add_parser(
         "quota-usage",
         help="输出当前 Project 本月 BigQuery 查询计费额度",
@@ -218,6 +225,17 @@ def main(argv: list[str] | None = None) -> int:
                 },
                 ensure_ascii=False,
                 indent=2,
+            )
+        )
+    elif (
+        arguments.command == "bigquery"
+        and arguments.bigquery_command == "plan-watch-events-catch-up"
+    ):
+        print(
+            json.dumps(
+                plan_watch_catch_up(arguments.workspace, arguments.target_date),
+                ensure_ascii=False,
+                separators=(",", ":"),
             )
         )
     elif arguments.command == "bigquery" and arguments.bigquery_command == "quota-usage":

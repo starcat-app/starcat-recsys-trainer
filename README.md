@@ -102,6 +102,17 @@ STARCAT_WATCH_APPEND_EXISTING=true \
 append 允许重放已覆盖日期或追加当前水位的下一天；跳日、修改预算、Location 或 `run_id`
 都会被拒绝。
 
+日常更新无需再手工计算日期。`catch-up` 会从 checkpoint 的最后完整分区开始，连续补齐到
+最新完整 UTC 日（默认 UTC 昨日），并沿用相同 Raw、预算和断点：
+
+```bash
+./scripts/download-watch-events.sh catch-up
+```
+
+临时回填到指定历史日期时设置 `STARCAT_WATCH_TARGET_DATE=YYYY-MM-DD`。目标不能包含 UTC
+当天或未来日期；checkpoint 存在日期缺口、外接盘未挂载、额度查询失败或已有下载任务运行时，
+命令会在访问 BigQuery 前拒绝执行。
+
 ## 管道结构
 
 ```text
