@@ -113,6 +113,19 @@ append 允许重放已覆盖日期或追加当前水位的下一天；跳日、�
 当天或未来日期；checkpoint 存在日期缺口、外接盘未挂载、额度查询失败或已有下载任务运行时，
 命令会在访问 BigQuery 前拒绝执行。
 
+`start` 通过 `screen + caffeinate` 启动长期后台下载，适合首次多年回填；`catch-up` 是有明确
+退出码的前台同步命令，供每日 LaunchAgent 或上层编排等待。Star History 生产日增量不要只运行
+本仓库脚本，统一使用主仓库的
+[WatchEvent 与 Star History 每日增量运维指南](../../docs/2-产品/需求讨论/推荐算法/WatchEvent与Star-History每日增量运维指南.md)：
+
+```bash
+cd /Users/dong4j/Developer/1.AI/ai-incubator/Starcat
+supports/scripts/run-history-daily-sync.sh
+```
+
+统一入口会先补 Raw，再从生产 History 水位构建并发布相邻 Delta。Trainer 只负责 Raw 下载，
+Raw 文件存在或 checkpoint 前进都不等于 History API 已经使用新数据。
+
 ## 管道结构
 
 ```text
@@ -145,6 +158,7 @@ SourceConnector
 ## 文档
 
 - [完整使用说明](docs/使用说明.md)
+- [WatchEvent 与 Star History 每日增量运维指南](../../docs/2-产品/需求讨论/推荐算法/WatchEvent与Star-History每日增量运维指南.md)
 - [Collection 本机 E2E 配置](configs/example-collection-local.yaml)
 - [架构设计](docs/架构设计.md)
 - [实施清单](docs/实施清单.md)
