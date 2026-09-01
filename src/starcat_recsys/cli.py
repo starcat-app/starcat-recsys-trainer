@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import logging
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from starcat_recsys.bigquery_lab import (
 )
 from starcat_recsys.bigquery_quota import (
     QUOTA_STOP_EXIT_CODE,
+    BigQueryQuotaConnectionError,
     format_quota_usage,
     quota_usage_document,
     read_bigquery_quota,
@@ -239,7 +241,13 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     elif arguments.command == "bigquery" and arguments.bigquery_command == "quota-usage":
-        usage = read_bigquery_quota(arguments.billing_project, arguments.location)
+        try:
+            usage = read_bigquery_quota(arguments.billing_project, arguments.location)
+        except BigQueryQuotaConnectionError as error:
+            # 启动脚本会捕获此输出写入长期日志；只暴露可操作原因，不打印代理地址、
+            # GCP 响应正文或整段 traceback。
+            print(f"错误：{error}", file=sys.stderr)
+            return 1
         line, should_stop = format_quota_usage(
             usage,
             warning_percent=arguments.warning_percent,

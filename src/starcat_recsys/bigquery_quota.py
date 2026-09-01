@@ -8,13 +8,39 @@ BigQuery 免费层按 billing account 共享，但 Jobs 元数据按 project 查
 from __future__ import annotations
 
 import re
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from google.api_core import exceptions as google_exceptions
+from google.api_core.retry import Retry
+from google.auth import exceptions as google_auth_exceptions
 from google.cloud import bigquery
+from requests import exceptions as requests_exceptions
 
 BIGQUERY_MONTHLY_FREE_TIER_BYTES = 1 << 40
 QUOTA_STOP_EXIT_CODE = 3
+QUOTA_QUERY_TIMEOUT_SECONDS = 20.0
+QUOTA_QUERY_RETRY_ATTEMPTS = 3
+QUOTA_QUERY_RETRY_INITIAL_DELAY_SECONDS = 1.0
+
+_RETRYABLE_QUOTA_ERRORS = (
+    google_exceptions.TooManyRequests,
+    google_exceptions.InternalServerError,
+    google_exceptions.BadGateway,
+    google_exceptions.ServiceUnavailable,
+    google_exceptions.GatewayTimeout,
+    google_exceptions.DeadlineExceeded,
+    google_auth_exceptions.TransportError,
+    requests_exceptions.ConnectionError,
+    requests_exceptions.Timeout,
+    TimeoutError,
+)
+
+
+class BigQueryQuotaConnectionError(RuntimeError):
+    """额度预检的瞬时网络错误在有限重试后仍未恢复。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,16 +61,38 @@ class BigQueryQuotaGateway(Protocol):
 class GoogleBigQueryQuotaGateway:
     """从区域级 ``INFORMATION_SCHEMA.JOBS_BY_PROJECT`` 读取月度用量。"""
 
-    def __init__(self, billing_project: str, location: str = "US") -> None:
+    def __init__(
+        self,
+        billing_project: str,
+        location: str = "US",
+        *,
+        timeout_seconds: float = QUOTA_QUERY_TIMEOUT_SECONDS,
+        retry_attempts: int = QUOTA_QUERY_RETRY_ATTEMPTS,
+        retry_initial_delay_seconds: float = QUOTA_QUERY_RETRY_INITIAL_DELAY_SECONDS,
+        sleeper: Callable[[float], None] = time.sleep,
+    ) -> None:
         if not billing_project:
             raise ValueError("billing_project 不能为空")
         if not re.fullmatch(r"[A-Za-z0-9-]+", location):
             raise ValueError("BigQuery location 格式不合法")
+        if timeout_seconds <= 0:
+            raise ValueError("额度查询 timeout_seconds 必须大于 0")
+        if retry_attempts <= 0:
+            raise ValueError("额度查询 retry_attempts 必须大于 0")
+        if retry_initial_delay_seconds < 0:
+            raise ValueError("额度查询 retry_initial_delay_seconds 不能小于 0")
         self._client = bigquery.Client(project=billing_project, location=location)
         self._query = _monthly_usage_query(location)
+        self._timeout_seconds = timeout_seconds
+        self._retry_attempts = retry_attempts
+        self._retry_initial_delay_seconds = retry_initial_delay_seconds
+        self._sleeper = sleeper
+        # SDK 默认 retry deadline 较长。额度预检位于后台任务启动前，必须限制单次
+        # HTTP 重试窗口，避免代理链路异常时终端长时间没有反馈。
+        self._request_retry = Retry(deadline=timeout_seconds)
 
     def fetch_monthly_usage(self) -> BigQueryQuotaUsage:
-        rows = list(self._client.query(self._query).result())
+        rows = self._fetch_rows_with_retry()
         if len(rows) != 1:
             raise RuntimeError("BigQuery 月度额度查询没有返回唯一汇总行")
         row = rows[0]
@@ -53,6 +101,35 @@ class GoogleBigQueryQuotaGateway:
             billed_bytes=int(row["billed_bytes"] or 0),
             processed_bytes=int(row["processed_bytes"] or 0),
         )
+
+    def _fetch_rows_with_retry(self) -> list[bigquery.Row]:
+        """仅重试 TLS、代理、超时及 Google 瞬时错误，配置和权限错误立即暴露。"""
+
+        for attempt in range(1, self._retry_attempts + 1):
+            try:
+                job = self._client.query(
+                    self._query,
+                    retry=self._request_retry,
+                    timeout=self._timeout_seconds,
+                    # 月度额度查询很小；业务层已经有界重试，不再让 SDK 重新创建 Job。
+                    job_retry=None,
+                )
+                return list(
+                    job.result(
+                        retry=self._request_retry,
+                        timeout=self._timeout_seconds,
+                        job_retry=None,
+                    )
+                )
+            except _RETRYABLE_QUOTA_ERRORS as error:
+                if attempt == self._retry_attempts:
+                    raise BigQueryQuotaConnectionError(
+                        f"BigQuery 额度预检连续 {self._retry_attempts} 次连接失败；"
+                        "请检查 HTTP(S)_PROXY、代理节点和 Google API TLS 连通性后重试"
+                    ) from error
+                delay = self._retry_initial_delay_seconds * (2 ** (attempt - 1))
+                self._sleeper(delay)
+        raise AssertionError("quota retry loop 不应运行到这里")
 
 
 def read_bigquery_quota(

@@ -44,6 +44,11 @@ _RETRYABLE_ERRORS = (
     requests_exceptions.Timeout,
 )
 
+
+class BigQueryTransientConnectionError(RuntimeError):
+    """日分区下载的网络重试耗尽，checkpoint 仍可安全续传。"""
+
+
 GH_ARCHIVE_QUERY_TEMPLATE = """
 SELECT
   CAST(id AS STRING) AS source_record_id,
@@ -363,6 +368,16 @@ class BigQueryDailyEventSource:
                 return callback()
             except _RETRYABLE_ERRORS as error:
                 if attempt == self._config.retry_attempts:
+                    if isinstance(
+                        error,
+                        (requests_exceptions.ConnectionError, requests_exceptions.Timeout),
+                    ):
+                        raise BigQueryTransientConnectionError(
+                            f"{operation} 的 TLS/代理连接在 "
+                            f"{self._config.retry_attempts} 次尝试后仍失败；"
+                            "请检查 HTTP(S)_PROXY、代理节点和 Google API 连通性后使用同一 "
+                            "workspace 续传"
+                        ) from error
                     raise
                 delay = self._config.retry_initial_delay_seconds * (2 ** (attempt - 1))
                 LOGGER.warning(

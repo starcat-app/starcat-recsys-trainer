@@ -13,6 +13,7 @@ from requests import exceptions as requests_exceptions
 from starcat_recsys.interfaces import TaskContext
 from starcat_recsys.sources.bigquery import (
     BigQueryConfig,
+    BigQueryTransientConnectionError,
     BigQueryWatchEventSource,
     GoogleBigQueryGateway,
     _gh_archive_query,
@@ -74,6 +75,18 @@ class FlakyTransportGateway(FakeGateway):
         if self.attempts == 1:
             raise requests_exceptions.SSLError("temporary TLS EOF")
         return super().fetch_events(table_suffix, maximum_bytes_billed)
+
+
+class FailingTransportGateway(FakeGateway):
+    """模拟代理链路持续中断直到业务层重试耗尽。"""
+
+    def __init__(self, estimates: dict[str, int]) -> None:
+        super().__init__(estimates)
+        self.attempts = 0
+
+    def fetch_events(self, table_suffix: str, maximum_bytes_billed: int) -> pa.Table:
+        self.attempts += 1
+        raise requests_exceptions.SSLError("persistent TLS EOF")
 
 
 class MissingDayGateway(FakeGateway):
@@ -288,6 +301,29 @@ def test_retries_transient_transport_error(tmp_path: Path) -> None:
 
     assert gateway.attempts == 2
     assert gateway.fetches == [("20260822", 1000)]
+
+
+def test_reports_proxy_hint_when_transport_retries_are_exhausted(tmp_path: Path) -> None:
+    gateway = FailingTransportGateway({"20260822": 100})
+    source = BigQueryWatchEventSource(
+        BigQueryConfig(
+            billing_project="starcat-test",
+            start_date=date(2026, 8, 22),
+            end_date=date(2026, 8, 22),
+            maximum_bytes_billed_per_day=1000,
+            retry_attempts=2,
+            retry_initial_delay_seconds=0,
+        ),
+        gateway,
+    )
+
+    with pytest.raises(
+        BigQueryTransientConnectionError,
+        match=r"TLS/代理连接.*HTTP\(S\)_PROXY.*同一 workspace 续传",
+    ):
+        source.collect(make_context(tmp_path))
+
+    assert gateway.attempts == 2
 
 
 def test_records_missing_historical_day_as_empty_partition(tmp_path: Path) -> None:
