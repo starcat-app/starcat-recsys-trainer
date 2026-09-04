@@ -74,6 +74,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="按 UTC 日分区下载精简 PushEvent，支持断点续传",
     )
     _add_daily_download_arguments(download_push)
+    repair_push = bigquery_commands.add_parser(
+        "repair-push-events-checkpoint",
+        help="验证现有 PushEvent Parquet 后受控修复 checkpoint checksum",
+    )
+    _add_daily_download_arguments(repair_push)
+    repair_push.add_argument("--apply", action="store_true")
+    repair_push.add_argument("--expected-mismatch-count", type=int)
     plan_watch_catch_up_command = bigquery_commands.add_parser(
         "plan-watch-events-catch-up",
         help="根据 checkpoint 计算 WatchEvent 到最新完整 UTC 日的追赶范围",
@@ -176,45 +183,16 @@ def main(argv: list[str] | None = None) -> int:
         "download-watch-events",
         "download-push-events",
     }:
-        config_document = {
-            "billing_project": arguments.billing_project,
-            "start_date": arguments.start_date.isoformat(),
-            "end_date": arguments.end_date.isoformat(),
-            "maximum_bytes_billed_per_day": arguments.maximum_bytes_billed_per_day,
-            "maximum_total_bytes_billed": arguments.maximum_total_bytes_billed,
-            "location": arguments.location,
-        }
-        config_hash = (
-            "sha256:"
-            + hashlib.sha256(json.dumps(config_document, sort_keys=True).encode()).hexdigest()
-        )
-        workspace = arguments.workspace.resolve()
+        config = _daily_download_config(arguments)
+        context = _daily_download_context(arguments)
+        workspace = context.workspace
         workspace.mkdir(parents=True, exist_ok=True)
         source_type = (
             BigQueryWatchEventSource
             if arguments.bigquery_command == "download-watch-events"
             else BigQueryPushEventSource
         )
-        artifacts = source_type(
-            BigQueryConfig(
-                billing_project=arguments.billing_project,
-                start_date=arguments.start_date,
-                end_date=arguments.end_date,
-                maximum_bytes_billed_per_day=arguments.maximum_bytes_billed_per_day,
-                maximum_total_bytes_billed=arguments.maximum_total_bytes_billed,
-                location=arguments.location,
-                retry_attempts=arguments.retry_attempts,
-                retry_initial_delay_seconds=arguments.retry_initial_delay_seconds,
-                append_existing=arguments.append_existing,
-            )
-        ).collect(
-            TaskContext(
-                run_id=arguments.run_id,
-                workspace=workspace,
-                config_hash=config_hash,
-                random_seed=0,
-            )
-        )
+        artifacts = source_type(config).collect(context)
         print(
             json.dumps(
                 {
@@ -229,6 +207,17 @@ def main(argv: list[str] | None = None) -> int:
                 indent=2,
             )
         )
+    elif (
+        arguments.command == "bigquery"
+        and arguments.bigquery_command == "repair-push-events-checkpoint"
+    ):
+        document = BigQueryPushEventSource.repair_checkpoint(
+            _daily_download_config(arguments),
+            _daily_download_context(arguments),
+            apply=arguments.apply,
+            expected_mismatch_count=arguments.expected_mismatch_count,
+        )
+        print(json.dumps(document, ensure_ascii=False, indent=2))
     elif (
         arguments.command == "bigquery"
         and arguments.bigquery_command == "plan-watch-events-catch-up"
@@ -289,6 +278,44 @@ def main(argv: list[str] | None = None) -> int:
             )
         print(json.dumps(document, ensure_ascii=False))
     return 0
+
+
+def _daily_download_config(arguments: argparse.Namespace) -> BigQueryConfig:
+    """从下载或 repair 命令构造同一份 checkpoint 任务配置。"""
+
+    return BigQueryConfig(
+        billing_project=arguments.billing_project,
+        start_date=arguments.start_date,
+        end_date=arguments.end_date,
+        maximum_bytes_billed_per_day=arguments.maximum_bytes_billed_per_day,
+        maximum_total_bytes_billed=arguments.maximum_total_bytes_billed,
+        location=arguments.location,
+        retry_attempts=arguments.retry_attempts,
+        retry_initial_delay_seconds=arguments.retry_initial_delay_seconds,
+        append_existing=arguments.append_existing,
+    )
+
+
+def _daily_download_context(arguments: argparse.Namespace) -> TaskContext:
+    """固定下载与 repair 共用的 config hash，避免修错其他任务的 checkpoint。"""
+
+    config_document = {
+        "billing_project": arguments.billing_project,
+        "start_date": arguments.start_date.isoformat(),
+        "end_date": arguments.end_date.isoformat(),
+        "maximum_bytes_billed_per_day": arguments.maximum_bytes_billed_per_day,
+        "maximum_total_bytes_billed": arguments.maximum_total_bytes_billed,
+        "location": arguments.location,
+    }
+    config_hash = (
+        "sha256:" + hashlib.sha256(json.dumps(config_document, sort_keys=True).encode()).hexdigest()
+    )
+    return TaskContext(
+        run_id=arguments.run_id,
+        workspace=arguments.workspace.resolve(),
+        config_hash=config_hash,
+        random_seed=0,
+    )
 
 
 def _add_sql_lab_arguments(parser: argparse.ArgumentParser) -> None:

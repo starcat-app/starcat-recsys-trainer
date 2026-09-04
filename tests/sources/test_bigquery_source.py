@@ -1,5 +1,6 @@
 """BigQuery 数据源测试。"""
 
+import fcntl
 import json
 from datetime import date
 from pathlib import Path
@@ -123,6 +124,30 @@ def test_collects_each_day_after_dry_run(tmp_path: Path) -> None:
     assert gateway.fetches == [("20260822", 1000), ("20260823", 1000)]
     assert all(Path(artifact.uri.removeprefix("file://")).exists() for artifact in artifacts)
     assert (tmp_path / "raw" / "gh_archive" / "manifest.json").exists()
+
+
+def test_collect_rejects_second_writer_for_same_raw_directory(tmp_path: Path) -> None:
+    output_directory = tmp_path / "raw" / "gh_archive"
+    output_directory.mkdir(parents=True)
+    lock_path = output_directory / ".download-writer.lock"
+    gateway = FakeGateway({"20260822": 100})
+    source = BigQueryWatchEventSource(
+        BigQueryConfig(
+            billing_project="starcat-test",
+            start_date=date(2026, 8, 22),
+            end_date=date(2026, 8, 22),
+            maximum_bytes_billed_per_day=1000,
+        ),
+        gateway,
+    )
+
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(RuntimeError, match="另一个 WatchEvent writer 正在运行"):
+            source.collect(make_context(tmp_path))
+
+    assert gateway.estimate_calls == []
+    assert gateway.fetches == []
 
 
 def test_refuses_partition_over_budget(tmp_path: Path) -> None:

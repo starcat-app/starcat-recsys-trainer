@@ -418,6 +418,59 @@ def test_download_push_events_cli_uses_independent_source(
     assert captured[0][1].run_id == "push-test"
 
 
+def test_repair_push_checkpoint_cli_requires_explicit_apply_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: object
+) -> None:
+    captured: list[tuple[BigQueryConfig, TaskContext, bool, int | None]] = []
+
+    class FakePushSource:
+        @classmethod
+        def repair_checkpoint(
+            cls,
+            config: BigQueryConfig,
+            context: TaskContext,
+            *,
+            apply: bool,
+            expected_mismatch_count: int | None = None,
+        ) -> dict[str, object]:
+            captured.append((config, context, apply, expected_mismatch_count))
+            return {"status": "repaired", "checksum_mismatch_count": 230}
+
+    monkeypatch.setattr("starcat_recsys.cli.BigQueryPushEventSource", FakePushSource)
+
+    assert (
+        main(
+            [
+                "bigquery",
+                "repair-push-events-checkpoint",
+                "--workspace",
+                tmp_path.as_posix(),
+                "--billing-project",
+                "starcat-test",
+                "--start-date",
+                "2016-01-01",
+                "--end-date",
+                "2026-08-25",
+                "--maximum-bytes-billed-per-day",
+                "1000",
+                "--maximum-total-bytes-billed",
+                "2000",
+                "--run-id",
+                "push-test",
+                "--apply",
+                "--expected-mismatch-count",
+                "230",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)  # type: ignore[attr-defined]
+    assert output["status"] == "repaired"
+    assert captured[0][1].workspace == tmp_path.resolve()
+    assert captured[0][2:] == (True, 230)
+
+
 def test_rejects_training_reference_time_different_from_train_end() -> None:
     with pytest.raises(ValueError, match="reference_time"):
         _training_reference_time(

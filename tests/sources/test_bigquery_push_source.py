@@ -1,5 +1,6 @@
 """BigQuery PushEvent 仓库基础元数据源测试。"""
 
+import json
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -7,6 +8,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from starcat_recsys.artifacts import sha256_file
 from starcat_recsys.interfaces import TaskContext
 from starcat_recsys.sources.bigquery import BigQueryConfig
 from starcat_recsys.sources.bigquery_push import (
@@ -135,6 +137,89 @@ def test_collects_daily_push_events_with_independent_checkpoint(tmp_path: Path) 
         "created_at",
     ]
     assert (tmp_path / "raw/gh_archive_push_events/download-state.json").exists()
+
+
+def test_repairs_checkpoint_checksum_only_after_full_validation(tmp_path: Path) -> None:
+    config = BigQueryConfig(
+        billing_project="starcat-test",
+        start_date=date(2026, 8, 22),
+        end_date=date(2026, 8, 22),
+        maximum_bytes_billed_per_day=1_000,
+        maximum_total_bytes_billed=2_000,
+    )
+    BigQueryPushEventSource(config, FakePushEventGateway({"20260822": 100})).collect(
+        _context(tmp_path)
+    )
+    output_directory = tmp_path / "raw" / "gh_archive_push_events"
+    state_path = output_directory / "download-state.json"
+    partition_path = output_directory / "push-events-20260822.parquet"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["completed_partitions"]["20260822"]["checksum"] = "sha256:other-writer"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    dry_run = BigQueryPushEventSource.repair_checkpoint(
+        config,
+        _context(tmp_path),
+        apply=False,
+    )
+
+    assert dry_run["status"] == "repair_required"
+    assert dry_run["checksum_mismatch_count"] == 1
+    assert dry_run["applied"] is False
+    assert (
+        json.loads(state_path.read_text())["completed_partitions"]["20260822"]["checksum"]
+        == "sha256:other-writer"
+    )
+
+    with pytest.raises(RuntimeError, match="与预期 2 不一致"):
+        BigQueryPushEventSource.repair_checkpoint(
+            config,
+            _context(tmp_path),
+            apply=True,
+            expected_mismatch_count=2,
+        )
+
+    repaired = BigQueryPushEventSource.repair_checkpoint(
+        config,
+        _context(tmp_path),
+        apply=True,
+        expected_mismatch_count=1,
+    )
+
+    repaired_state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert repaired["status"] == "repaired"
+    assert repaired["checksum_mismatch_count"] == 1
+    assert repaired["backup_file"] is not None
+    assert (output_directory / repaired["backup_file"]).is_file()
+    assert repaired_state["completed_partitions"]["20260822"]["checksum"] == sha256_file(
+        partition_path
+    )
+    resumed_gateway = FakePushEventGateway({})
+    BigQueryPushEventSource(config, resumed_gateway).collect(_context(tmp_path))
+    assert resumed_gateway.fetches == []
+
+
+def test_repair_rejects_row_count_drift(tmp_path: Path) -> None:
+    config = BigQueryConfig(
+        billing_project="starcat-test",
+        start_date=date(2026, 8, 22),
+        end_date=date(2026, 8, 22),
+        maximum_bytes_billed_per_day=1_000,
+    )
+    BigQueryPushEventSource(config, FakePushEventGateway({"20260822": 100})).collect(
+        _context(tmp_path)
+    )
+    state_path = tmp_path / "raw/gh_archive_push_events/download-state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["completed_partitions"]["20260822"]["metadata"]["row_count"] = 2
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="行数与 checkpoint 不一致"):
+        BigQueryPushEventSource.repair_checkpoint(
+            config,
+            _context(tmp_path),
+            apply=False,
+        )
 
 
 def test_builds_bounded_year_query_with_latest_repository_name() -> None:

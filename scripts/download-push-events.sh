@@ -6,6 +6,7 @@ set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly EVENT_LABEL="PushEvent"
 readonly COMMAND_NAME="download-push-events"
+readonly REPAIR_COMMAND_NAME="repair-push-events-checkpoint"
 readonly SESSION_NAME="${STARCAT_PUSH_SESSION_NAME:-starcat-push-events}"
 readonly VOLUME_ROOT="${STARCAT_PUSH_VOLUME_ROOT:-/Volumes/T0}"
 readonly WORKSPACE="${STARCAT_PUSH_WORKSPACE:-$VOLUME_ROOT/Starcat/bigquery/push-events-2016-2026}"

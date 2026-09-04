@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -98,6 +99,88 @@ echo not-ready
     )
 
     assert completed.stdout == "not-ready\n"
+
+
+def test_discovers_untracked_python_worker_without_pid_file(tmp_path: Path) -> None:
+    """脚本升级清掉 PID 文件后，仍必须按 CLI 与 workspace 找到旧 Python worker。"""
+
+    fake_repo = tmp_path / "repo"
+    script_directory = fake_repo / "scripts"
+    cli_directory = fake_repo / ".venv" / "bin"
+    script_directory.mkdir(parents=True)
+    cli_directory.mkdir(parents=True)
+    fake_cli = cli_directory / "starcat-recsys"
+    fake_cli.write_text(
+        f"#!{REPO_ROOT / '.venv/bin/python'}\nimport time\ntime.sleep(30)\n",
+        encoding="utf-8",
+    )
+    fake_cli.chmod(0o755)
+    workspace = tmp_path / "workspace"
+    harness = script_directory / "download-test-events.sh"
+    harness.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR={str(script_directory)!r}
+EVENT_LABEL=TestEvent
+COMMAND_NAME=download-test-events
+SESSION_NAME=starcat-test-events
+VOLUME_ROOT={str(tmp_path)!r}
+WORKSPACE={str(workspace)!r}
+LOG_FILE={str(tmp_path / "worker.log")!r}
+START_DATE=2016-01-01
+END_DATE=2016-01-01
+MAXIMUM_BYTES_PER_DAY=1
+MAXIMUM_TOTAL_BYTES=1
+RUN_ID=test
+APPEND_EXISTING=false
+STATE_RELATIVE_PATH=raw/state.json
+PID_BASENAME=starcat-test-events
+source {str(COMMON_SCRIPT)!r}
+worker_pids
+""",
+        encoding="utf-8",
+    )
+    harness.chmod(0o755)
+    worker = subprocess.Popen(
+        [
+            REPO_ROOT / ".venv" / "bin" / "python",
+            "-c",
+            "import time; time.sleep(30)",
+            fake_cli,
+            "bigquery",
+            "download-test-events",
+            "--workspace",
+            workspace,
+        ],
+        cwd=fake_repo,
+        env={**os.environ, "TMPDIR": str(tmp_path)},
+    )
+    try:
+        discovered = ""
+        for _ in range(20):
+            completed = subprocess.run(
+                [harness],
+                cwd=fake_repo,
+                env={**os.environ, "TMPDIR": str(tmp_path)},
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            discovered = completed.stdout.strip()
+            if discovered:
+                break
+            time.sleep(0.05)
+
+        command_line = subprocess.run(
+            ["/bin/ps", "-p", str(worker.pid), "-o", "pid=,comm=,command="],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert discovered == str(worker.pid), command_line
+    finally:
+        worker.terminate()
+        worker.wait(timeout=5)
 
 
 def test_record_worker_exit_persists_structured_reason(tmp_path: Path) -> None:

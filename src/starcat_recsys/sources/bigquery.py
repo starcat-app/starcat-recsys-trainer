@@ -6,14 +6,16 @@ Connector 按 UTC 日逐分区执行查询。每个分区必须先 dry run，且
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import os
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from pathlib import Path
 from typing import Any, Protocol, TypeVar
@@ -161,6 +163,16 @@ class BigQueryDailyEventSource:
     def collect(self, context: TaskContext) -> list[Artifact]:
         output_directory = context.workspace / "raw" / self.output_directory_name
         output_directory.mkdir(parents=True, exist_ok=True)
+        # checkpoint 是整份 JSON 原子替换；即使每个 Parquet 也原子落盘，两个 writer
+        # 仍会用各自的内存快照互相覆盖。锁必须覆盖完整 collect，而不是单次文件写入。
+        with _download_writer_lock(output_directory, self.event_label):
+            return self._collect_locked(context, output_directory)
+
+    def _collect_locked(
+        self,
+        context: TaskContext,
+        output_directory: Path,
+    ) -> list[Artifact]:
         state_path = output_directory / "download-state.json"
         requested_scope = self._state_scope(context)
         completed, stored_estimated_bytes, state_scope = _load_download_state(
@@ -319,17 +331,46 @@ class BigQueryDailyEventSource:
         )
         return artifacts
 
+    @classmethod
+    def repair_checkpoint(
+        cls,
+        config: BigQueryConfig,
+        context: TaskContext,
+        *,
+        apply: bool,
+        expected_mismatch_count: int | None = None,
+    ) -> dict[str, Any]:
+        """验证完整分区后受控修复并发 writer 留下的 checksum 错位。
+
+        该入口只认可已有 checkpoint 中的分区，不收养孤立文件，也不查询 BigQuery。
+        apply 必须携带预期失配数，防止检查和写回之间的数据范围发生意外变化。
+        """
+
+        if apply and expected_mismatch_count is None:
+            raise ValueError("应用 checkpoint 修复时必须提供 expected_mismatch_count")
+        if expected_mismatch_count is not None and expected_mismatch_count < 0:
+            raise ValueError("expected_mismatch_count 不能小于 0")
+
+        output_directory = context.workspace / "raw" / cls.output_directory_name
+        if not output_directory.is_dir():
+            raise RuntimeError(f"{cls.event_label} 下载目录不存在")
+        with _download_writer_lock(output_directory, cls.event_label):
+            return _repair_download_checkpoint(
+                output_directory=output_directory,
+                state_scope=_download_state_scope(config, context),
+                file_prefix=cls.file_prefix,
+                artifact_kind=cls.artifact_kind,
+                metadata_source=cls.metadata_source,
+                expected_columns=cls.expected_columns,
+                event_label=cls.event_label,
+                apply=apply,
+                expected_mismatch_count=expected_mismatch_count,
+            )
+
     def _state_scope(self, context: TaskContext) -> dict[str, Any]:
         """固定 checkpoint 的数据语义，避免换日期或预算后误复用旧结果。"""
 
-        return {
-            "run_id": context.run_id,
-            "start_date": self._config.start_date.isoformat(),
-            "end_date": self._config.end_date.isoformat(),
-            "maximum_bytes_billed_per_day": self._config.maximum_bytes_billed_per_day,
-            "maximum_total_bytes_billed": self._config.maximum_total_bytes_billed,
-            "location": self._config.location,
-        }
+        return _download_state_scope(self._config, context)
 
     def _enforce_total_budget(self, estimated_total_bytes: int) -> None:
         maximum = self._config.maximum_total_bytes_billed
@@ -412,6 +453,194 @@ class BigQueryWatchEventSource(BigQueryDailyEventSource):
 
     def _empty_table(self) -> pa.Table:
         return _empty_watch_event_table()
+
+
+@contextmanager
+def _download_writer_lock(output_directory: Path, event_label: str) -> Iterator[None]:
+    """为一个 Raw 目录持有进程级单写者锁，进程退出时由内核自动释放。"""
+
+    lock_path = output_directory / ".download-writer.lock"
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            handle.seek(0)
+            try:
+                owner = json.load(handle)
+            except (json.JSONDecodeError, OSError):
+                owner = {}
+            owner_pid = owner.get("pid") if isinstance(owner, dict) else None
+            owner_text = f"（PID {owner_pid}）" if isinstance(owner_pid, int) else ""
+            raise RuntimeError(f"另一个 {event_label} writer 正在运行{owner_text}") from error
+
+        # 锁文件可以在崩溃后保留，但 flock 会由内核释放；每次成功获取后覆盖 owner，
+        # 让并发拒绝信息指向当前进程，而不是误报历史 PID。
+        handle.seek(0)
+        handle.truncate()
+        json.dump(
+            {
+                "schema_version": 1,
+                "event": event_label,
+                "pid": os.getpid(),
+                "acquired_at": datetime.now(UTC).isoformat(),
+            },
+            handle,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _download_state_scope(config: BigQueryConfig, context: TaskContext) -> dict[str, Any]:
+    """构造下载与 repair 共用的 checkpoint 任务语义。"""
+
+    return {
+        "run_id": context.run_id,
+        "start_date": config.start_date.isoformat(),
+        "end_date": config.end_date.isoformat(),
+        "maximum_bytes_billed_per_day": config.maximum_bytes_billed_per_day,
+        "maximum_total_bytes_billed": config.maximum_total_bytes_billed,
+        "location": config.location,
+    }
+
+
+def _repair_download_checkpoint(
+    *,
+    output_directory: Path,
+    state_scope: dict[str, Any],
+    file_prefix: str,
+    artifact_kind: str,
+    metadata_source: str,
+    expected_columns: tuple[str, ...],
+    event_label: str,
+    apply: bool,
+    expected_mismatch_count: int | None,
+) -> dict[str, Any]:
+    """只在文件集合、schema、行数和元数据全部一致时重算 checkpoint checksum。"""
+
+    state_path = output_directory / "download-state.json"
+    try:
+        document = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"无法读取 {event_label} 下载状态") from error
+    if document.get("schema_version") != 1 or document.get("scope") != state_scope:
+        raise RuntimeError(f"{event_label} 下载状态与 repair 任务范围不一致")
+    completed = document.get("completed_partitions")
+    if not isinstance(completed, dict):
+        raise RuntimeError(f"{event_label} 下载状态缺少 completed_partitions")
+
+    expected_suffixes = set(completed)
+    actual_suffixes = {
+        path.stem.removeprefix(f"{file_prefix}-")
+        for path in output_directory.glob(f"{file_prefix}-*.parquet")
+    }
+    missing_count = len(expected_suffixes - actual_suffixes)
+    orphan_count = len(actual_suffixes - expected_suffixes)
+    if missing_count or orphan_count:
+        raise RuntimeError(
+            f"{event_label} 分区集合不一致：缺失 {missing_count}，孤立 {orphan_count}"
+        )
+
+    checksum_updates: dict[str, str] = {}
+    for suffix, saved in sorted(completed.items()):
+        try:
+            datetime.strptime(suffix, "%Y%m%d")
+        except ValueError as error:
+            raise RuntimeError(f"{event_label} checkpoint 包含无效分区键") from error
+        if not isinstance(saved, dict):
+            raise RuntimeError(f"{event_label} 分区状态字段不完整：{suffix}")
+        path = output_directory / f"{file_prefix}-{suffix}.parquet"
+        artifact = _artifact_from_state(path, saved)
+        metadata = artifact.metadata
+        if artifact.kind != artifact_kind or metadata.get("source") != metadata_source:
+            raise RuntimeError(f"{event_label} 分区来源或 kind 不匹配：{suffix}")
+        if metadata.get("partition") != suffix:
+            raise RuntimeError(f"{event_label} 分区元数据不匹配：{suffix}")
+        row_count = metadata.get("row_count")
+        estimated_bytes = metadata.get("estimated_bytes")
+        if type(row_count) is not int or type(estimated_bytes) is not int:
+            raise RuntimeError(f"{event_label} 分区计数元数据无效：{suffix}")
+        if row_count < 0 or estimated_bytes < 0:
+            raise RuntimeError(f"{event_label} 分区计数元数据不能为负数：{suffix}")
+        try:
+            parquet_metadata = pq.read_metadata(path)
+            _validate_table_columns(parquet_metadata.schema.names, expected_columns, event_label)
+        except (OSError, pa.ArrowException, ValueError) as error:
+            raise RuntimeError(f"{event_label} Parquet 无法通过结构校验：{suffix}") from error
+        if parquet_metadata.num_rows != row_count:
+            raise RuntimeError(f"{event_label} Parquet 行数与 checkpoint 不一致：{suffix}")
+        actual_checksum = sha256_file(path)
+        if actual_checksum != artifact.checksum:
+            checksum_updates[suffix] = actual_checksum
+
+    mismatch_count = len(checksum_updates)
+    if apply and mismatch_count != expected_mismatch_count:
+        raise RuntimeError(
+            f"{event_label} checksum 失配数为 {mismatch_count}，"
+            f"与预期 {expected_mismatch_count} 不一致"
+        )
+
+    backup_file: str | None = None
+    if apply and checksum_updates:
+        repaired_at = datetime.now(UTC)
+        backup_path = output_directory / (
+            f"download-state.pre-repair-{repaired_at:%Y%m%dT%H%M%SZ}-{os.getpid()}.json"
+        )
+        # 先留下完整 checkpoint 备份，再一次性替换正式状态；任何失败都不会让一部分
+        # checksum 生效、一部分仍旧保留。
+        write_json_atomic(backup_path, document)
+        backup_file = backup_path.name
+        for suffix, checksum in checksum_updates.items():
+            saved = completed[suffix]
+            assert isinstance(saved, dict)
+            saved["checksum"] = checksum
+        write_json_atomic(state_path, document)
+
+    return {
+        "schema_version": 1,
+        "event": event_label,
+        "status": (
+            "repaired"
+            if apply and checksum_updates
+            else "repair_required"
+            if checksum_updates
+            else "clean"
+        ),
+        "partition_count": len(completed),
+        "checksum_mismatch_count": mismatch_count,
+        "checksum_mismatch_ranges": _partition_ranges(list(checksum_updates)),
+        "applied": apply,
+        "backup_file": backup_file,
+    }
+
+
+def _partition_ranges(suffixes: list[str]) -> list[str]:
+    """把大量失配日压缩成连续范围，避免 repair 输出数千行。"""
+
+    if not suffixes:
+        return []
+    dates = sorted(datetime.strptime(suffix, "%Y%m%d").date() for suffix in suffixes)
+    ranges: list[str] = []
+    start = previous = dates[0]
+    for current in dates[1:]:
+        if current != previous + timedelta(days=1):
+            ranges.append(
+                start.strftime("%Y%m%d")
+                if start == previous
+                else f"{start:%Y%m%d}-{previous:%Y%m%d}"
+            )
+            start = current
+        previous = current
+    ranges.append(
+        start.strftime("%Y%m%d") if start == previous else f"{start:%Y%m%d}-{previous:%Y%m%d}"
+    )
+    return ranges
 
 
 def _partition_metadata(

@@ -25,6 +25,8 @@ usage() {
   ./scripts/$(basename "$SCRIPT_PATH") stop     停止后台下载
   ./scripts/$(basename "$SCRIPT_PATH") restart  重新启动后台下载
   ./scripts/$(basename "$SCRIPT_PATH") catch-up 连续补齐到最新完整 UTC 日
+  ./scripts/$(basename "$SCRIPT_PATH") repair-checkpoint [--apply --expected-mismatch-count N]
+                                              校验或受控修复 checkpoint
   ./scripts/$(basename "$SCRIPT_PATH") status   查看进程、checkpoint 和额度
   ./scripts/$(basename "$SCRIPT_PATH") logs     持续查看日志
 
@@ -60,8 +62,39 @@ validated_pid() {
   printf '%s\n' "$pid"
 }
 
-worker_pid() {
+pid_file_worker_pid() {
   validated_pid "$PID_FILE" "$CLI bigquery $COMMAND_NAME --workspace $WORKSPACE"
+}
+
+discovered_worker_pids() {
+  local command_fragment="$CLI bigquery $COMMAND_NAME --workspace $WORKSPACE"
+  # 升级前的 wrapper 可能已经清理 PID 文件，却因 caffeinate 不转发信号而留下
+  # Python worker。macOS 的 ps comm 只有 16 字符，绝对路径会被截断，因此改用
+  # CLI + workspace 完整命令片段，并排除携带同一 fragment 的 awk 扫描器自身。
+  /bin/ps -axo pid=,command= 2>/dev/null \
+    | /usr/bin/awk -v fragment="$command_fragment" '
+      {
+        pid = $1
+        line = $0
+        if (index(line, fragment) > 0 && index(line, "/usr/bin/awk") == 0) {
+          print pid
+        }
+      }
+    '
+}
+
+worker_pids() {
+  {
+    pid_file_worker_pid || true
+    discovered_worker_pids || true
+  } | /usr/bin/awk '/^[0-9]+$/ && !seen[$0]++'
+}
+
+worker_pid() {
+  local pid
+  pid="$(worker_pids | /usr/bin/head -n 1)"
+  [[ -n "$pid" ]] || return 1
+  printf '%s\n' "$pid"
 }
 
 monitor_pid() {
@@ -178,22 +211,27 @@ stop_download() {
     return
   fi
 
+  local workers
+  workers="$(worker_pids || true)"
   terminate_validated_pid "$(monitor_pid || true)"
-  terminate_validated_pid "$(worker_pid || true)"
+  while IFS= read -r pid; do
+    terminate_validated_pid "$pid"
+  done <<<"$workers"
   if has_screen_session; then
     /usr/bin/screen -S "$SESSION_NAME" -X quit 2>/dev/null || true
   fi
 
   local attempt
   for attempt in 1 2 3 4 5; do
-    if ! worker_pid >/dev/null && ! monitor_pid >/dev/null; then
+    if [[ -z "$(worker_pids || true)" ]] && ! monitor_pid >/dev/null; then
       break
     fi
     /bin/sleep 1
   done
   local pid
-  pid="$(worker_pid || true)"
-  [[ -n "$pid" ]] && /bin/kill -KILL "$pid" 2>/dev/null || true
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] && /bin/kill -KILL "$pid" 2>/dev/null || true
+  done <<<"$(worker_pids || true)"
   pid="$(monitor_pid || true)"
   [[ -n "$pid" ]] && /bin/kill -KILL "$pid" 2>/dev/null || true
   /bin/rm -f "$PID_FILE" "$MONITOR_PID_FILE"
@@ -210,8 +248,10 @@ show_status() {
   echo "数据目录：$WORKSPACE"
   echo "日志文件：$LOG_FILE"
   local pid
-  pid="$(worker_pid || true)"
-  [[ -n "$pid" ]] && echo "下载进程 PID：$pid"
+  local workers
+  workers="$(worker_pids || true)"
+  [[ -n "$workers" ]] \
+    && echo "下载进程 PID：$(/usr/bin/tr '\n' ' ' <<<"$workers" | /usr/bin/sed 's/ $//')"
   pid="$(monitor_pid || true)"
   [[ -n "$pid" ]] && echo "额度监控 PID：$pid"
 
@@ -259,6 +299,7 @@ show_status_json() {
   local skip_quota="${1:-false}"
   local running="false"
   local worker=""
+  local workers=""
   local monitor=""
   local quota_json="null"
   local screen_alive="false"
@@ -266,6 +307,7 @@ show_status_json() {
   is_running && running="true"
   has_screen_session && screen_alive="true"
   worker="$(worker_pid || true)"
+  workers="$(worker_pids | /usr/bin/paste -sd, - || true)"
   monitor="$(monitor_pid || true)"
   quota_exit_code=0
   if [[ "$skip_quota" != "true" ]]; then
@@ -287,7 +329,7 @@ show_status_json() {
   "$REPO_ROOT/.venv/bin/python" - \
     "$STATE_FILE" "$LAST_EXIT_FILE" "$EVENT_LABEL" "$COMMAND_NAME" "$running" \
     "$screen_alive" "$SESSION_NAME" \
-    "$worker" "$monitor" "$START_DATE" "$END_DATE" "$quota_json" \
+    "$worker" "$workers" "$monitor" "$START_DATE" "$END_DATE" "$quota_json" \
     "$quota_exit_code" <<'PY'
 import json
 import sys
@@ -303,6 +345,7 @@ from pathlib import Path
     screen_alive_text,
     session_name,
     worker_pid,
+    worker_pids_text,
     monitor_pid,
     start_date,
     end_date,
@@ -348,6 +391,7 @@ document = {
     "screen_alive": screen_alive_text == "true",
     "screen_session": session_name,
     "worker_pid": int(worker_pid) if worker_pid else None,
+    "worker_pids": [int(value) for value in worker_pids_text.split(",") if value],
     "quota_monitor_pid": int(monitor_pid) if monitor_pid else None,
     "start_date": start_date,
     "end_date": end_date,
@@ -398,6 +442,61 @@ follow_logs() {
   require_external_mount
   /usr/bin/touch "$LOG_FILE"
   exec /usr/bin/tail -n 100 -F "$LOG_FILE"
+}
+
+repair_checkpoint() {
+  if [[ -z "${REPAIR_COMMAND_NAME:-}" ]]; then
+    echo "错误：$EVENT_LABEL 尚未提供 checkpoint repair 命令。" >&2
+    return 2
+  fi
+  require_external_mount
+  require_runtime
+  if is_running || has_screen_session; then
+    echo "错误：下载任务正在运行，必须先停止 writer 再修复 checkpoint。" >&2
+    return 1
+  fi
+
+  local apply="false"
+  local expected_mismatch_count=""
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      --apply)
+        apply="true"
+        shift
+        ;;
+      --expected-mismatch-count)
+        [[ "$#" -ge 2 ]] || {
+          echo "错误：--expected-mismatch-count 缺少数值。" >&2
+          return 2
+        }
+        expected_mismatch_count="$2"
+        shift 2
+        ;;
+      *)
+        echo "错误：未知 repair 参数：$1" >&2
+        return 2
+        ;;
+    esac
+  done
+  if [[ "$apply" == "true" && ! "$expected_mismatch_count" =~ ^[0-9]+$ ]]; then
+    echo "错误：--apply 必须同时提供非负整数 --expected-mismatch-count。" >&2
+    return 2
+  fi
+
+  local repair_args=(
+    --workspace "$WORKSPACE"
+    --billing-project "$BILLING_PROJECT"
+    --start-date "$START_DATE"
+    --end-date "$END_DATE"
+    --maximum-bytes-billed-per-day "$MAXIMUM_BYTES_PER_DAY"
+    --maximum-total-bytes-billed "$MAXIMUM_TOTAL_BYTES"
+    --location "$LOCATION"
+    --run-id "$RUN_ID"
+  )
+  if [[ "$apply" == "true" ]]; then
+    repair_args+=(--apply --expected-mismatch-count "$expected_mismatch_count")
+  fi
+  "$CLI" bigquery "$REPAIR_COMMAND_NAME" "${repair_args[@]}"
 }
 
 run_quota_monitor() {
@@ -651,6 +750,10 @@ bigquery_download_main() {
       ;;
     catch-up)
       catch_up_download
+      ;;
+    repair-checkpoint)
+      shift
+      repair_checkpoint "$@"
       ;;
     status)
       if [[ "${2:-}" == "--json" ]]; then
