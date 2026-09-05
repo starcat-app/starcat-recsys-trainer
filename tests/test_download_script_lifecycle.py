@@ -10,6 +10,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ENTRY_SCRIPT = REPO_ROOT / "scripts" / "download-push-events.sh"
+WATCH_ENTRY_SCRIPT = REPO_ROOT / "scripts" / "download-watch-events.sh"
 COMMON_SCRIPT = REPO_ROOT / "scripts" / "lib" / "bigquery-download-common.sh"
 
 
@@ -37,6 +38,7 @@ def test_status_json_reports_persisted_last_exit(tmp_path: Path) -> None:
             "STARCAT_PUSH_VOLUME_ROOT": str(tmp_path),
             "STARCAT_PUSH_WORKSPACE": str(tmp_path / "workspace"),
             "STARCAT_PUSH_LOG_FILE": str(log_file),
+            "STARCAT_PUSH_SESSION_NAME": "starcat-push-events-last-exit-test",
         },
         check=True,
         capture_output=True,
@@ -48,6 +50,178 @@ def test_status_json_reports_persisted_last_exit(tmp_path: Path) -> None:
     assert document["screen_alive"] is False
     assert document["last_exit"] == last_exit
     assert document["last_exit_error"] is None
+
+
+def test_watch_status_uses_extended_checkpoint_scope(tmp_path: Path) -> None:
+    """每日追加后，状态范围必须来自 checkpoint，而不是首次回填的固定终点。"""
+
+    workspace = tmp_path / "workspace"
+    state = workspace / "raw/gh_archive/download-state.json"
+    state.parent.mkdir(parents=True)
+    state.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "scope": {"start_date": "2026-08-25", "end_date": "2026-08-27"},
+                "completed_partitions": {
+                    "20260825": {},
+                    "20260826": {},
+                    "20260827": {},
+                },
+                "estimated_total_bytes": 123,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [WATCH_ENTRY_SCRIPT, "status", "--json", "--skip-quota"],
+        cwd=REPO_ROOT,
+        env={
+            **os.environ,
+            "TMPDIR": str(tmp_path),
+            "STARCAT_WATCH_VOLUME_ROOT": str(tmp_path),
+            "STARCAT_WATCH_WORKSPACE": str(workspace),
+            "STARCAT_WATCH_LOG_FILE": str(tmp_path / "watch.log"),
+            "STARCAT_WATCH_SESSION_NAME": "starcat-watch-events-status-test",
+            "STARCAT_WATCH_START_DATE": "2026-08-25",
+            "STARCAT_WATCH_END_DATE": "2026-08-25",
+        },
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    document = json.loads(completed.stdout)
+    assert document["start_date"] == "2026-08-25"
+    assert document["end_date"] == "2026-08-27"
+    assert document["configured_end_date"] == "2026-08-25"
+    assert document["checkpoint_end_date"] == "2026-08-27"
+    assert document["total_partitions"] == 3
+    assert document["completed_partitions"] == 3
+
+
+def test_watch_start_rejects_incremental_checkpoint_before_quota(tmp_path: Path) -> None:
+    """进入每日增量阶段后，start 必须在额度查询前提示改用 catch-up。"""
+
+    workspace = tmp_path / "workspace"
+    state = workspace / "raw/state.json"
+    state.parent.mkdir(parents=True)
+    state.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "scope": {"start_date": "2026-08-25", "end_date": "2026-08-27"},
+                "completed_partitions": {"20260825": {}, "20260827": {}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    quota_marker = tmp_path / "quota-called"
+    harness = tmp_path / "download-watch-events.sh"
+    harness.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR={str(REPO_ROOT / "scripts")!r}
+EVENT_LABEL=WatchEvent
+COMMAND_NAME=download-watch-events
+SESSION_NAME=starcat-watch-events-test
+VOLUME_ROOT={str(tmp_path)!r}
+WORKSPACE={str(workspace)!r}
+LOG_FILE={str(tmp_path / "watch.log")!r}
+START_DATE=2026-08-25
+END_DATE=2026-08-25
+MAXIMUM_BYTES_PER_DAY=1
+MAXIMUM_TOTAL_BYTES=1
+RUN_ID=test
+APPEND_EXISTING=false
+CATCH_UP_ENABLED=true
+STATE_RELATIVE_PATH=raw/state.json
+PID_BASENAME=starcat-watch-events-test
+source {str(COMMON_SCRIPT)!r}
+require_external_mount() {{ :; }}
+require_runtime() {{ :; }}
+is_running() {{ return 1; }}
+has_screen_session() {{ return 1; }}
+quota_check() {{ touch {str(quota_marker)!r}; }}
+start_download
+""",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        ["/bin/bash", harness],
+        cwd=REPO_ROOT,
+        env={**os.environ, "TMPDIR": str(tmp_path)},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 1
+    assert "start 仅用于首次多年回填" in completed.stderr
+    assert "download-watch-events.sh catch-up" in completed.stderr
+    assert not quota_marker.exists()
+
+
+def test_watch_catch_up_without_target_date_is_bash_32_safe(tmp_path: Path) -> None:
+    """未指定 target-date 时不能展开空数组并触发 nounset。"""
+
+    fake_repo = tmp_path / "repo"
+    script_directory = fake_repo / "scripts"
+    cli_directory = fake_repo / ".venv/bin"
+    script_directory.mkdir(parents=True)
+    cli_directory.mkdir(parents=True)
+    fake_cli = cli_directory / "starcat-recsys"
+    fake_cli.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+[[ "$*" == *"plan-watch-events-catch-up"* ]]
+printf '%s\n' '{"status":"no_work","pending_days":0}'
+""",
+        encoding="utf-8",
+    )
+    fake_cli.chmod(0o755)
+    (cli_directory / "python").symlink_to(REPO_ROOT / ".venv/bin/python")
+    harness = script_directory / "download-watch-events.sh"
+    harness.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR={str(script_directory)!r}
+EVENT_LABEL=WatchEvent
+COMMAND_NAME=download-watch-events
+SESSION_NAME=starcat-watch-events-test
+VOLUME_ROOT={str(tmp_path)!r}
+WORKSPACE={str(tmp_path / "workspace")!r}
+LOG_FILE={str(tmp_path / "watch.log")!r}
+START_DATE=2016-01-01
+END_DATE=2026-08-25
+MAXIMUM_BYTES_PER_DAY=1
+MAXIMUM_TOTAL_BYTES=1
+RUN_ID=test
+APPEND_EXISTING=false
+CATCH_UP_ENABLED=true
+CATCH_UP_TARGET_DATE=
+STATE_RELATIVE_PATH=raw/state.json
+PID_BASENAME=starcat-watch-events-test
+source {str(COMMON_SCRIPT)!r}
+require_external_mount() {{ :; }}
+is_running() {{ return 1; }}
+catch_up_download
+""",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        ["/bin/bash", harness],
+        cwd=fake_repo,
+        env={**os.environ, "TMPDIR": str(tmp_path)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "已是最新完整 UTC 日，无需下载" in completed.stdout
 
 
 def test_worker_readiness_does_not_treat_screen_as_running(tmp_path: Path) -> None:

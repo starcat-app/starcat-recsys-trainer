@@ -21,7 +21,7 @@ readonly STARTUP_READY_INTERVAL_SECONDS="${STARCAT_DOWNLOAD_STARTUP_READY_INTERV
 usage() {
   cat <<EOF
 用法：
-  ./scripts/$(basename "$SCRIPT_PATH") start    启动后台下载
+  ./scripts/$(basename "$SCRIPT_PATH") start    启动首次全量后台下载
   ./scripts/$(basename "$SCRIPT_PATH") stop     停止后台下载
   ./scripts/$(basename "$SCRIPT_PATH") restart  重新启动后台下载
   ./scripts/$(basename "$SCRIPT_PATH") catch-up 连续补齐到最新完整 UTC 日
@@ -171,6 +171,9 @@ start_download() {
     echo "请先使用 stop 清理残留会话，再重新启动。" >&2
     return 1
   fi
+  if ! guard_initial_backfill_start; then
+    return 1
+  fi
 
   local quota_exit_code
   echo "正在检查 BigQuery 月度额度，完成后将启动 $EVENT_LABEL 下载任务..."
@@ -198,6 +201,44 @@ start_download() {
   echo "下载任务已启动：$SESSION_NAME"
   echo "数据目录：$WORKSPACE"
   echo "日志文件：$LOG_FILE"
+}
+
+guard_initial_backfill_start() {
+  [[ "${CATCH_UP_ENABLED:-false}" == "true" && -f "$STATE_FILE" ]] || return 0
+
+  local checkpoint_summary
+  if ! checkpoint_summary="$(
+    "$REPO_ROOT/.venv/bin/python" - "$STATE_FILE" "$END_DATE" 2>/dev/null <<'PY'
+import json
+import sys
+from datetime import date
+from pathlib import Path
+
+state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+configured_end = date.fromisoformat(sys.argv[2])
+scope = state.get("scope")
+partitions = state.get("completed_partitions")
+if not isinstance(scope, dict) or not isinstance(partitions, dict):
+    raise ValueError("checkpoint 结构无效")
+scope_end = date.fromisoformat(str(scope["end_date"]))
+last_partition = max(partitions) if partitions else ""
+last_completed = date.fromisoformat(last_partition).isoformat() if last_partition else ""
+if scope_end > configured_end or (last_completed and date.fromisoformat(last_completed) > configured_end):
+    print(f"{scope_end.isoformat()}\t{last_completed}")
+PY
+  )"; then
+    # checkpoint 损坏仍交给下载器原有校验报告；这里只拦截可确认的命令误用。
+    return 0
+  fi
+  [[ -n "$checkpoint_summary" ]] || return 0
+
+  local checkpoint_end
+  local last_completed
+  IFS=$'\t' read -r checkpoint_end last_completed <<<"$checkpoint_summary"
+  echo "错误：$EVENT_LABEL checkpoint 已进入每日增量阶段（scope 至 ${checkpoint_end}，最后完成 ${last_completed}）。" >&2
+  echo "start 仅用于首次多年回填，不能用固定终点 $END_DATE 启动；请改用：" >&2
+  echo "  ./scripts/$(basename "$SCRIPT_PATH") catch-up" >&2
+  return 1
 }
 
 terminate_validated_pid() {
@@ -358,14 +399,21 @@ last_exit_error = None
 partitions = {}
 estimated_total_bytes = 0
 state_path = Path(state_name)
+checkpoint_start_date = None
+checkpoint_end_date = None
 if state_path.is_file():
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
         partitions = state.get("completed_partitions", {})
         if not isinstance(partitions, dict):
             raise ValueError("completed_partitions 不是对象")
+        scope = state.get("scope")
+        if not isinstance(scope, dict):
+            raise ValueError("scope 不是对象")
+        checkpoint_start_date = date.fromisoformat(str(scope["start_date"])).isoformat()
+        checkpoint_end_date = date.fromisoformat(str(scope["end_date"])).isoformat()
         estimated_total_bytes = int(state.get("estimated_total_bytes", 0))
-    except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
+    except (KeyError, OSError, ValueError, TypeError, json.JSONDecodeError) as error:
         checkpoint_error = type(error).__name__
         partitions = {}
 last_exit_path = Path(last_exit_name)
@@ -381,8 +429,10 @@ try:
     quota = json.loads(quota_text)
 except json.JSONDecodeError:
     quota = None
-start = date.fromisoformat(start_date)
-end = date.fromisoformat(end_date)
+effective_start_date = checkpoint_start_date or start_date
+effective_end_date = checkpoint_end_date or end_date
+start = date.fromisoformat(effective_start_date)
+end = date.fromisoformat(effective_end_date)
 document = {
     "schema_version": 1,
     "event": event_label,
@@ -393,8 +443,12 @@ document = {
     "worker_pid": int(worker_pid) if worker_pid else None,
     "worker_pids": [int(value) for value in worker_pids_text.split(",") if value],
     "quota_monitor_pid": int(monitor_pid) if monitor_pid else None,
-    "start_date": start_date,
-    "end_date": end_date,
+    "start_date": effective_start_date,
+    "end_date": effective_end_date,
+    "configured_start_date": start_date,
+    "configured_end_date": end_date,
+    "checkpoint_start_date": checkpoint_start_date,
+    "checkpoint_end_date": checkpoint_end_date,
     "total_partitions": (end - start).days + 1,
     "completed_partitions": len(partitions),
     "last_partition": max(partitions) if partitions else None,
@@ -666,15 +720,17 @@ catch_up_download() {
     return 1
   fi
 
-  local target_args=()
+  # macOS Bash 3.2 在 set -u 下无法安全展开空数组；把可选参数编码成一个标量，
+  # 避免无 target-date 的正常 catch-up 在规划阶段直接退出。
+  local target_date_arg=""
   if [[ -n "${CATCH_UP_TARGET_DATE:-}" ]]; then
-    target_args+=(--target-date "$CATCH_UP_TARGET_DATE")
+    target_date_arg="--target-date=$CATCH_UP_TARGET_DATE"
   fi
   local plan
   plan="$(
     "$CLI" bigquery plan-watch-events-catch-up \
       --workspace "$WORKSPACE" \
-      "${target_args[@]}"
+      ${target_date_arg:+"$target_date_arg"}
   )"
   local status start_date end_date pending_days
   IFS=$'\t' read -r status start_date end_date pending_days <<<"$(
