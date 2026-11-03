@@ -85,8 +85,70 @@ def _edge(source: int, target: int, rank: int, model: str) -> dict[str, object]:
 
 def _dataset_row(subject: str, repo_id: int, split: str) -> dict[str, object]:
     return {
+        "source": "gh_archive",
         "source_subject_id": subject,
         "repo_id": repo_id,
         "split": split,
         "training_eligible": True,
     }
+
+
+def test_independent_evaluation_retains_outside_catalog_and_scopes_sources(tmp_path: Path) -> None:
+    """独立标签不能被训练目录静默删掉；相同主体字符串不得跨来源合并。"""
+    training = tmp_path / "train.parquet"
+    pq.write_table(pa.Table.from_pylist([_dataset_row("trainer", 1, "train")]), training)
+    rows = [
+        _dataset_row("same", 1, "train"),
+        _dataset_row("same", 2, "validation"),
+        {**_dataset_row("same", 99, "validation"), "source": "starcat_snapshot"},
+    ]
+    evaluation = tmp_path / "evaluation.parquet"
+    pq.write_table(pa.Table.from_pylist(rows), evaluation)
+    model = write_recommendations(tmp_path / "edges.parquet", [_edge(1, 2, 1, "costar")], "costar")
+    result_artifact = OfflineEvaluator(EvaluationConfig(k=1)).evaluate(
+        TaskContext("independent", tmp_path / "workspace", "sha256:test", 7),
+        [
+            artifact_for(training, "training_dataset", {}),
+            artifact_for(evaluation, "evaluation_dataset", {}),
+            model,
+        ],
+    )[0]
+    result = json.loads(Path(result_artifact.uri[7:]).read_text())
+    assert result["evaluation_dataset_checksum"] != result["dataset_checksum"]
+    assert result["models"]["costar"]["evaluated_subjects"] == 1
+    assert result["models"]["costar"]["skipped_subjects"] == 1
+    assert result["models"]["costar"]["recall@1"] == 1
+    assert result["models"]["costar"]["truth_catalog_coverage"] == 0
+
+
+def test_seed_limit_keeps_full_history_exclusion(tmp_path: Path) -> None:
+    """查询只发最近代表种子，但所有历史仍参与排除。"""
+    path = tmp_path / "dataset.parquet"
+    rows = [
+        {**_dataset_row("u", repo, split), "occurred_at": date}
+        for repo, split, date in [
+            (1, "train", "2026-01-01"),
+            (2, "train", "2026-02-01"),
+            (3, "validation", "2026-03-01"),
+        ]
+    ]
+    pq.write_table(pa.Table.from_pylist(rows), path)
+    seeds: dict[str, set[int]] = {}
+    histories, truths, catalog = _load_subject_sets(
+        path, "validation", maximum_seeds=1, seed_histories=seeds
+    )
+    assert list(seeds.values()) == [{2}]
+    result = OfflineEvaluator(EvaluationConfig(k=1))._evaluate_model(
+        histories, truths, catalog, {2: [(1, 10), (3, 1)]}, seed_histories=seeds
+    )
+    assert result["recall@1"] == 1
+
+
+def test_catalog_recall_counts_only_hits_inside_its_denominator() -> None:
+    """主召回保留所有真值，辅助目录内召回不能因为目录外命中变成大于 1。"""
+    metrics = OfflineEvaluator(EvaluationConfig(k=2))._evaluate_model(
+        {"u": {1}}, {"u": {2, 3}}, {1, 2}, {1: [(3, 2.0), (2, 1.0)]}
+    )
+    assert metrics["recall@2"] == 1
+    assert metrics["catalog_recall"] == 1
+    assert metrics["truth_catalog_coverage"] == 0.5
