@@ -32,6 +32,7 @@ class CoStarConfig:
     maximum_pair_observations: int = 100_000_000
     top_k: int = 100
     model_name: str = "costar"
+    require_full_pair_budget: bool = False
 
     def __post_init__(self) -> None:
         if parse_datetime(self.reference_time) is None:
@@ -70,6 +71,20 @@ class CoStarTrainer:
         connection = connect_for_workspace(context.workspace, self.name)
         try:
             connection.read_parquet(artifact_path(dataset).as_posix()).create_view("dataset")
+            if self._config.require_full_pair_budget:
+                # 消融和正式候选不能因预算耗尽静默换一批训练主体；先计算实际配对量，
+                # 超预算就阻断，由操作者明确调整资源或样本，而非产出伪同组结果。
+                pairs = connection.execute(
+                    """
+                    SELECT coalesce(sum(n*(n-1)//2),0) FROM (
+                        SELECT least(count(DISTINCT repo_id),?) AS n FROM dataset
+                        WHERE split='train' AND training_eligible
+                        GROUP BY source_subject_id)
+                """,
+                    [self._config.maximum_repositories_per_subject],
+                ).fetchone()
+                if pairs and pairs[0] > self._config.maximum_pair_observations:
+                    raise ValueError("实际配对量超过预算，禁止隐式截断主体")
             artifact = write_recommendations_query(
                 connection,
                 context.workspace / "models" / self.name / "recommendations.parquet",

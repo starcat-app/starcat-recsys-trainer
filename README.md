@@ -158,6 +158,12 @@ SourceConnector
 ## 文档
 
 - [完整使用说明](docs/使用说明.md)
+- [候选训练与本地验收](docs/候选训练与本地验收.md)
+- [v17 候选训练与本地验收结果](docs/v17-候选训练与本地验收结果.md)
+- [v17 近期数据保留率审计](docs/v17-近期数据保留率审计.md)
+- [v18 事件身份修复与评估抽样方案](docs/v18-事件身份修复与评估抽样方案.md)
+- [v19 独立主体评估与 API 交付](docs/v19-独立主体评估与API交付.md)
+- [v20 仓库覆盖扩容与内容冷启动交付](docs/v20-仓库覆盖扩容与内容冷启动交付.md)
 - [WatchEvent 与 Star History 每日增量运维指南](../../docs/2-产品/需求讨论/推荐算法/WatchEvent与Star-History每日增量运维指南.md)
 - [Collection 本机 E2E 配置](configs/example-collection-local.yaml)
 - [架构设计](docs/架构设计.md)

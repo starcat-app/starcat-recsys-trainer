@@ -29,15 +29,21 @@ class BundleConfig:
     selected_model: str = "costar"
     metric_gates: dict[str, float] = field(default_factory=dict)
     git_commit: str = "unknown"
+    install: bool = True
+    metrics_scope: str = "same_model"
 
     def __post_init__(self) -> None:
         _validate_version(self.model_version)
         if not self.selected_model:
             raise ValueError("selected_model 不能为空")
+        if self.metrics_scope not in {"same_model", "pre_refit"}:
+            raise ValueError("metrics_scope 必须是 same_model 或 pre_refit")
+        if self.metrics_scope == "pre_refit" and self.install:
+            raise ValueError("引用重训前评估的候选禁止自动安装")
 
 
 class ServingBundlePublisher:
-    """构建 Bundle 并安装到不可变本地 Registry。"""
+    """构建 Bundle；候选模式只在 run 内落盘，不触碰共享 Registry。"""
 
     def __init__(self, config: BundleConfig, registry: LocalModelRegistry) -> None:
         self._config = config
@@ -51,6 +57,17 @@ class ServingBundlePublisher:
         metrics = metrics_document["models"].get(self._config.selected_model)
         if metrics is None:
             raise ValueError(f"评估结果不包含模型 {self._config.selected_model}")
+        evaluated_checksum = metrics_document.get("model_checksums", {}).get(
+            self._config.selected_model
+        )
+        if self._config.metrics_scope == "pre_refit" and not evaluated_checksum:
+            raise ValueError("重训引用评估缺少原模型校验和")
+        if (
+            self._config.metrics_scope == "same_model"
+            and evaluated_checksum
+            and evaluated_checksum != model.checksum
+        ):
+            raise ValueError("评估模型与待构建模型校验和不一致")
         _check_metric_gates(metrics, self._config.metric_gates)
 
         staging = context.workspace / "published" / (self._config.model_version + ".staging")
@@ -59,6 +76,11 @@ class ServingBundlePublisher:
         staging.mkdir(parents=True)
         database_path = staging / "recommendations.sqlite"
         _build_database(database_path, artifact_path(model), artifact_path(repositories))
+        content_indexes = [item for item in inputs if item.kind == "content_index"]
+        if len(content_indexes) > 1:
+            raise ValueError("最多提供一个内容索引")
+        if content_indexes:
+            _attach_content_index(database_path, artifact_path(content_indexes[0]))
         manifest = {
             "schema_version": 1,
             "model_version": self._config.model_version,
@@ -68,11 +90,18 @@ class ServingBundlePublisher:
             "config_hash": context.config_hash,
             "random_seed": context.random_seed,
             "metrics": metrics,
+            "metrics_scope": self._config.metrics_scope,
+            "evaluation_checksum": metrics_artifact.checksum,
+            "evaluated_model_checksum": metrics_document.get("model_checksums", {}).get(
+                self._config.selected_model
+            ),
             "input_artifacts": [
                 {"kind": item.kind, "checksum": item.checksum}
                 for item in sorted(inputs, key=lambda item: (item.kind, item.checksum))
             ],
         }
+        if content_indexes:
+            manifest["content_fallback"] = content_indexes[0].metadata
         write_json_atomic(staging / "manifest.json", manifest)
         checksums = {
             path.name: sha256_file(path)
@@ -81,7 +110,14 @@ class ServingBundlePublisher:
         }
         write_json_atomic(staging / "checksums.json", checksums)
         verify_bundle(staging)
-        installed = self._registry.install(staging, self._config.model_version)
+        if self._config.install:
+            installed = self._registry.install(staging, self._config.model_version)
+        else:
+            # 不使用临时 Registry 的 active 冒充“不激活”；候选根本不执行 install。
+            installed = staging.with_name(self._config.model_version)
+            if installed.exists():
+                raise FileExistsError("候选版本已存在，不允许覆盖")
+            staging.rename(installed)
         return [
             artifact_for(
                 installed / "manifest.json",
@@ -206,6 +242,31 @@ def query_bundle(
         return [dict(row) for row in database.execute(query, parameters).fetchall()]
 
 
+def _attach_content_index(database_path: Path, index_path: Path) -> None:
+    """把已训练索引封装进不可变 Bundle，发布端仍只有原来的三个白名单文件。"""
+    with sqlite3.connect(database_path) as database:
+        database.execute("ATTACH DATABASE ? AS content_index", (str(index_path),))
+        database.executescript(
+            """
+            CREATE TABLE content_vocabulary (
+                term TEXT PRIMARY KEY, idf REAL NOT NULL
+            ) WITHOUT ROWID;
+            INSERT INTO content_vocabulary SELECT * FROM content_index.content_vocabulary;
+            CREATE TABLE content_postings (
+                term TEXT NOT NULL, repo_id INTEGER NOT NULL, weight REAL NOT NULL,
+                PRIMARY KEY(term, repo_id)
+            ) WITHOUT ROWID;
+            INSERT INTO content_postings SELECT * FROM content_index.content_postings;
+            """
+        )
+        invalid = database.execute(
+            "SELECT COUNT(*) FROM content_postings "
+            "WHERE repo_id NOT IN (SELECT repo_id FROM repositories)"
+        ).fetchone()[0]
+        if invalid:
+            raise ValueError("内容索引引用了目录外目标")
+
+
 def _build_database(database_path: Path, model_path: Path, repository_path: Path) -> None:
     with sqlite3.connect(database_path) as database:
         database.executescript(
@@ -292,6 +353,11 @@ def _build_database(database_path: Path, model_path: Path, repository_path: Path
                 target_repo_id,
                 min(0.99, cume_dist() OVER (ORDER BY score)) AS display_score
             FROM recommendations;
+
+            -- 这里有上百万条内容融合边；相关子查询必须按复合键查找，不能为每条
+            -- 推荐重新扫描整个临时校准表，否则构建复杂度会退化为 O(N²)。
+            CREATE UNIQUE INDEX recommendation_display_scores_pair_idx
+                ON recommendation_display_scores(source_repo_id, target_repo_id);
 
             UPDATE recommendations
             SET display_score = (

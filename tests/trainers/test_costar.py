@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from starcat_recsys.artifacts import artifact_for
 from starcat_recsys.interfaces import TaskContext
@@ -88,6 +89,29 @@ def test_costar_bounds_subject_pair_expansion(tmp_path: Path) -> None:
     rows = pq.read_table(Path(artifact.uri[7:])).to_pylist()
     assert len(rows) == 6
     assert {json.loads(row["signals"])["support"] for row in rows} == {0.5}
+
+
+def test_strict_budget_rejects_changing_the_training_cohort(tmp_path: Path) -> None:
+    """严格候选模式超预算应失败，而非悄悄训练部分主体。"""
+    path = tmp_path / "dataset.parquet"
+    pq.write_table(
+        pa.Table.from_pylist(
+            [_row(subject, repo) for subject in ["u1", "u2"] for repo in [1, 2, 3]]
+        ),
+        path,
+    )
+    with pytest.raises(ValueError, match="禁止隐式截断主体"):
+        CoStarTrainer(
+            CoStarConfig(
+                reference_time=datetime(2026, 1, 1, tzinfo=UTC),
+                maximum_repositories_per_subject=3,
+                maximum_pair_observations=3,
+                require_full_pair_budget=True,
+            )
+        ).train(
+            TaskContext("strict", tmp_path / "workspace", "test", 42),
+            [artifact_for(path, "training_dataset", {})],
+        )
 
 
 def _row(

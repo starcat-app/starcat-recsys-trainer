@@ -141,6 +141,58 @@ def test_runs_end_to_end_pipeline_and_cli_query(tmp_path: Path, capsys: object) 
     assert resume_manifest["tasks"][0]["task_name"] == "resume:canonical"
     assert (tmp_path / "resume-workspace/runs/resume-run/canonical-resume.json").is_file()
 
+    # 候选模式不能安装到原 Registry；SVD 可显式跳过以避免无关重训。
+    active = tmp_path / "registry/active.json"
+    before = active.read_bytes()
+    candidate_config = {
+        **resume_config,
+        "run_id": "candidate-run",
+        "workspace": "candidate",
+        "training": {**config["training"], "train_svd": False},
+        "publish": {"model_version": "candidate-v1", "install": False},
+    }
+    candidate_path = tmp_path / "candidate.yaml"
+    candidate_path.write_text(yaml.safe_dump(candidate_config))
+    candidate = run_pipeline(candidate_path)
+    assert active.read_bytes() == before
+    assert not (tmp_path / "registry/versions/candidate-v1").exists()
+    candidate_bundle = Path(candidate.metadata["bundle_uri"].removeprefix("file://"))
+    assert (
+        json.loads((candidate_bundle / "manifest.json").read_text())["metrics_scope"]
+        == "same_model"
+    )
+    metrics_path = tmp_path / "candidate/runs/candidate-run/evaluation/validation-metrics.json"
+    reference = json.loads(metrics_path.read_text())
+    reference["split"] = "test"
+    reference["models"]["costar"]["evaluated_subjects"] = 1
+    reference_path = tmp_path / "reference-test.json"
+    reference_path.write_text(json.dumps(reference))
+    refit_config = {
+        **candidate_config,
+        "run_id": "refit-run",
+        "workspace": "refit",
+        "evaluation": {"reference_metrics": str(reference_path)},
+        "publish": {"model_version": "refit-v1", "install": False},
+    }
+    refit_path = tmp_path / "refit.yaml"
+    refit_path.write_text(yaml.safe_dump(refit_config))
+    refit = run_pipeline(refit_path)
+    manifest_path = Path(refit.uri.removeprefix("file://"))
+    assert json.loads(manifest_path.read_text())["metrics_scope"] == "pre_refit"
+    assert active.read_bytes() == before
+
+
+def test_candidate_rejects_remote_delivery_before_collection(tmp_path: Path) -> None:
+    """候选模式禁止远端交付，必须在训练或外部副作用之前失败。"""
+    path = tmp_path / "invalid.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {"publish": {"install": False, "recommend_api": {"base_url": "https://invalid"}}}
+        )
+    )
+    with pytest.raises(ValueError, match="禁止向 Recommend API"):
+        run_pipeline(path)
+
 
 def test_single_subject_skips_svd_and_publishes_costar_bundle(tmp_path: Path) -> None:
     interactions = tmp_path / "interactions.jsonl"

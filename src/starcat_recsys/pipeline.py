@@ -13,7 +13,7 @@ from typing import Any
 
 import yaml
 
-from starcat_recsys.artifacts import sha256_file, write_json_atomic
+from starcat_recsys.artifacts import artifact_for, sha256_file, write_json_atomic
 from starcat_recsys.bundle import (
     BundleConfig,
     LocalModelRegistry,
@@ -56,6 +56,12 @@ def run_pipeline(config_path: Path) -> Artifact:
     """读取并执行完整管道，返回已注册 ServingBundle artifact。"""
 
     document, config_hash = _load_config(config_path)
+    publish_config = _required_dict(document, "publish")
+    install = publish_config.get("install", True)
+    if not isinstance(install, bool):
+        raise ValueError("publish.install 必须是布尔值")
+    if not install and _optional_dict(publish_config, "recommend_api"):
+        raise ValueError("候选模式禁止向 Recommend API 交付")
     base_directory = config_path.resolve().parent
     workspace = _resolve_path(base_directory, _required_string(document, "workspace"))
     registry_root = _resolve_path(base_directory, _required_string(document, "registry"))
@@ -65,6 +71,14 @@ def run_pipeline(config_path: Path) -> Artifact:
     if context.workspace.exists():
         raise FileExistsError(f"run_id 已存在，不允许覆盖：{run_id}")
     context.workspace.mkdir(parents=True)
+    # 运行开始就冻结实际源码摘要，避免长任务期间其它本地编辑污染运行溯源。
+    source_checksums = {
+        str(path.relative_to(Path(__file__).resolve().parents[2])): sha256_file(path)
+        for path in [
+            *sorted(Path(__file__).resolve().parent.rglob("*.py")),
+            Path(__file__).resolve().parents[2] / "uv.lock",
+        ]
+    }
     executor = LocalExecutor()
 
     resume_manifest_value = document.get("resume_canonical_manifest")
@@ -118,6 +132,13 @@ def run_pipeline(config_path: Path) -> Artifact:
                 ),
             )
     dataset_config = _required_dict(document, "dataset")
+    cohort_catalog = dataset_config.get("frozen_cohort_catalog")
+    if cohort_catalog is not None:
+        if not isinstance(cohort_catalog, str) or not cohort_catalog.strip():
+            raise ValueError("dataset.frozen_cohort_catalog 必须是非空路径")
+        canonical.append(
+            artifact_for(_resolve_path(base_directory, cohort_catalog), "cohort_repositories", {})
+        )
     train_end = _datetime(dataset_config["train_end"])
     validation_end = _datetime(dataset_config["validation_end"])
     dataset = executor.execute(
@@ -143,6 +164,7 @@ def run_pipeline(config_path: Path) -> Artifact:
                     else None
                 ),
                 subject_sample_rate=float(dataset_config.get("subject_sample_rate", 1.0)),
+                freeze_cohort=cohort_catalog is not None,
             )
         ).build(context, canonical),
     )
@@ -156,21 +178,27 @@ def run_pipeline(config_path: Path) -> Artifact:
             "train:popular", lambda: PopularTrainer(PopularConfig(top_k)).train(context, dataset)
         )
     )
-    svd_models = executor.execute_optional(
-        "train:svd",
-        lambda: SVDTrainer(
-            SVDConfig(
-                components=int(training_config.get("svd_components", 64)),
-                top_k=top_k,
-                maximum_interactions=int(
-                    training_config.get("svd_maximum_interactions", 5_000_000)
-                ),
-                maximum_subjects=int(training_config.get("svd_maximum_subjects", 200_000)),
-                maximum_repositories=int(training_config.get("svd_maximum_repositories", 50_000)),
-                neighbor_batch_size=int(training_config.get("svd_neighbor_batch_size", 1_000)),
-            )
-        ).train(context, dataset),
-        skip_on=InsufficientTrainingDataError,
+    svd_models = (
+        executor.execute_optional(
+            "train:svd",
+            lambda: SVDTrainer(
+                SVDConfig(
+                    components=int(training_config.get("svd_components", 64)),
+                    top_k=top_k,
+                    maximum_interactions=int(
+                        training_config.get("svd_maximum_interactions", 5_000_000)
+                    ),
+                    maximum_subjects=int(training_config.get("svd_maximum_subjects", 200_000)),
+                    maximum_repositories=int(
+                        training_config.get("svd_maximum_repositories", 50_000)
+                    ),
+                    neighbor_batch_size=int(training_config.get("svd_neighbor_batch_size", 1_000)),
+                )
+            ).train(context, dataset),
+            skip_on=InsufficientTrainingDataError,
+        )
+        if bool(training_config.get("train_svd", True))
+        else None
     )
     if svd_models is not None:
         models.extend(svd_models)
@@ -208,17 +236,34 @@ def run_pipeline(config_path: Path) -> Artifact:
         )
 
     evaluation_config = _required_dict(document, "evaluation")
-    metrics = executor.execute(
-        "evaluate",
-        lambda: OfflineEvaluator(
-            EvaluationConfig(
-                split=str(evaluation_config.get("split", "validation")),
-                k=int(evaluation_config.get("k", 20)),
-                maximum_subjects=int(evaluation_config.get("maximum_subjects", 10_000)),
-            )
-        ).evaluate(context, [*dataset, *models]),
-    )
-    publish_config = _required_dict(document, "publish")
+    reference_metrics = evaluation_config.get("reference_metrics")
+    if reference_metrics is not None:
+        if install:
+            raise ValueError("重训引用评估只允许候选模式，不得自动安装")
+        if not isinstance(reference_metrics, str) or not reference_metrics.strip():
+            raise ValueError("evaluation.reference_metrics 必须是非空路径")
+        path = _resolve_path(base_directory, reference_metrics)
+        reference_document = json.loads(path.read_text(encoding="utf-8"))
+        selected = str(publish_config.get("selected_model", "costar"))
+        reference_model = reference_document.get("models", {}).get(selected, {})
+        if (
+            reference_document.get("split") != "test"
+            or not reference_document.get("model_checksums", {}).get(selected)
+            or reference_model.get("evaluated_subjects", 0) <= 0
+        ):
+            raise ValueError("重训必须引用有模型校验和及有效主体的 test 评估")
+        metrics = [artifact_for(path, "evaluation_metrics", {})]
+    else:
+        metrics = executor.execute(
+            "evaluate",
+            lambda: OfflineEvaluator(
+                EvaluationConfig(
+                    split=str(evaluation_config.get("split", "validation")),
+                    k=int(evaluation_config.get("k", 20)),
+                    maximum_subjects=int(evaluation_config.get("maximum_subjects", 10_000)),
+                )
+            ).evaluate(context, [*dataset, *models]),
+        )
     publisher = ServingBundlePublisher(
         BundleConfig(
             model_version=_required_string(publish_config, "model_version"),
@@ -228,6 +273,8 @@ def run_pipeline(config_path: Path) -> Artifact:
                 for key, value in _optional_dict(publish_config, "metric_gates").items()
             },
             git_commit=_git_commit(),
+            install=install,
+            metrics_scope="pre_refit" if reference_metrics is not None else "same_model",
         ),
         LocalModelRegistry(registry_root),
     )
@@ -260,6 +307,8 @@ def run_pipeline(config_path: Path) -> Artifact:
             "schema_version": 1,
             "run_id": run_id,
             "config_hash": config_hash,
+            # HEAD 不包含本地未提交实现；记录实际运行源码与锁文件摘要以复现实验。
+            "source_checksums": source_checksums,
             "tasks": [asdict(item) for item in executor.executions],
             "bundle": {"uri": bundle.uri, "checksum": bundle.checksum, **bundle.metadata},
             "delivery": (
@@ -441,6 +490,7 @@ def _costar_config(
         minimum_support=float(config.get("minimum_support", 0)),
         maximum_repositories_per_subject=int(config.get("maximum_repositories_per_subject", 2_000)),
         maximum_pair_observations=int(config.get("maximum_pair_observations", 100_000_000)),
+        require_full_pair_budget=bool(config.get("require_full_pair_budget", False)),
         top_k=top_k,
         model_name=model_name,
     )
