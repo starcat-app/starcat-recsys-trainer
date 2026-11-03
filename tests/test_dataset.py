@@ -71,6 +71,8 @@ def test_builds_latest_public_deduplicated_time_split_dataset(tmp_path: Path) ->
     assert report["public_repository_rows"] == 4
     assert report["unique_subject_repository_rows"] == 4
     assert report["training_eligible_subject_count"] == 1
+    assert report["event_identity_policy"] == "gh_archive_watch_event_v2"
+    assert artifacts[0].metadata["event_identity_policy"] == report["event_identity_policy"]
 
 
 def test_train_weight_is_invariant_to_future_interactions(tmp_path: Path) -> None:
@@ -90,6 +92,161 @@ def test_train_weight_is_invariant_to_future_interactions(tmp_path: Path) -> Non
     base_weight = next(row["sample_weight"] for row in base_dataset if row["repo_id"] == 1)
     future_weight = next(row["sample_weight"] for row in future_dataset if row["repo_id"] == 1)
     assert base_weight == future_weight == 0.5
+
+
+@pytest.mark.parametrize("changed_field", ["occurred_at", "source_subject_id", "repo_id"])
+def test_watch_event_identity_preserves_id_reuse(tmp_path: Path, changed_field: str) -> None:
+    """原始 ID 不是全局唯一；不同时间、主体或仓库的事件不能相互覆盖。"""
+    original = _interaction("reused", "a", 1, "2025-01-01", "star_event", "2025-01-01")
+    collision = {**original, "observed_at": _time("2026-01-01")}
+    collision[changed_field] = {
+        "occurred_at": _time("2026-01-01"),
+        "source_subject_id": "b",
+        "repo_id": 3,
+    }[changed_field]
+    rows = [
+        original,
+        _interaction("a2", "a", 2, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("b1", "b", 1, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("b2", "b", 2, "2025-01-01", "star_event", "2025-01-01"),
+        collision,
+    ]
+
+    dataset = _build_dataset(tmp_path, rows)
+
+    report = json.loads((tmp_path / "workspace/dataset/quality-report.json").read_text())
+    assert report["deduplicated_rows"] == 5
+    # 后续“同主体仓库首次 Star”仍独立生效，不能用保留所有事件来膨胀训练关系。
+    first = next(row for row in dataset if row["source_subject_id"] == "a" and row["repo_id"] == 1)
+    assert first["occurred_at"] == original["occurred_at"]
+    assert first["observed_at"] == original["observed_at"]
+
+
+def test_duplicate_watch_event_keeps_latest_observation(tmp_path: Path) -> None:
+    """下载重试应合并同一事件，重复观测只能更新该事件自身。"""
+    original = _interaction("same", "a", 1, "2025-01-01", "star_event", "2025-01-01")
+    latest = {**original, "observed_at": _time("2025-02-01")}
+    dataset = _build_dataset(
+        tmp_path,
+        [
+            original,
+            original,
+            latest,
+            _interaction("a2", "a", 2, "2025-01-01", "star_event", "2025-01-01"),
+        ],
+    )
+
+    assert len(dataset) == 2
+    assert (
+        next(row for row in dataset if row["repo_id"] == 1)["observed_at"] == latest["observed_at"]
+    )
+    report = json.loads((tmp_path / "workspace/dataset/quality-report.json").read_text())
+    assert report["deduplicated_rows"] == 2
+
+
+def test_future_reused_event_id_cannot_change_training_history(tmp_path: Path) -> None:
+    """未来无关事件不得删除训练记录或改变目录支持度、主体准入和权重。"""
+    base = [
+        _interaction("reused", "a", 1, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("a2", "a", 2, "2025-01-02", "star_event", "2025-01-02"),
+        _interaction("b1", "b", 1, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("b2", "b", 2, "2025-01-02", "star_event", "2025-01-02"),
+    ]
+    config = DatasetConfig(
+        train_end=datetime(2025, 4, 1, tzinfo=UTC),
+        validation_end=datetime(2025, 8, 1, tzinfo=UTC),
+        minimum_repository_interactions=2,
+        freeze_cohort=True,
+    )
+    original, original_repositories = _build_dataset_with_config(
+        tmp_path / "base", base, config, cohort_ids=[1, 2]
+    )
+    with_future, future_repositories = _build_dataset_with_config(
+        tmp_path / "future",
+        [
+            *base,
+            _interaction("reused", "future", 2, "2026-01-01", "star_event", "2026-01-01"),
+        ],
+        config,
+        cohort_ids=[1, 2],
+    )
+
+    assert original_repositories == future_repositories
+    assert original == [row for row in with_future if row["split"] == "train"]
+    assert len(original) == 4
+
+
+def test_snapshot_id_deduplication_and_latest_snapshot_are_unchanged(tmp_path: Path) -> None:
+    """WatchEvent 修复不能顺带改变其他来源按 ID 去重和仅用最新快照的规则。"""
+    rows = [
+        _interaction("old", "starcat", 4, "2025-01-01", "current_star_membership"),
+        _interaction("reused", "starcat", 1, "2026-01-01", "current_star_membership"),
+        _interaction("reused", "starcat", 2, "2026-01-01", "current_star_membership"),
+        _interaction("new", "starcat", 3, "2026-01-01", "current_star_membership"),
+    ]
+
+    dataset = _build_dataset(tmp_path, rows)
+
+    assert len(dataset) == 2
+    assert {row["repo_id"] for row in dataset} in ({1, 3}, {2, 3})
+    report = json.loads((tmp_path / "workspace/dataset/quality-report.json").read_text())
+    assert report["latest_snapshot_rows"] == 3
+    assert report["deduplicated_rows"] == 2
+
+
+def test_non_archive_events_keep_source_id_deduplication(tmp_path: Path) -> None:
+    """即使其他来源也产生 Star 关系，本次修复也不扩展它的事件身份。"""
+    dataset = _build_dataset(
+        tmp_path,
+        [
+            _interaction("reused", "starcat", 1, "2025-01-01", "star_event", "2025-01-01"),
+            _interaction("reused", "starcat", 2, "2025-02-01", "star_event", "2025-02-01"),
+            _interaction("other", "starcat", 3, "2025-01-01", "star_event", "2025-01-01"),
+        ],
+    )
+
+    assert {row["repo_id"] for row in dataset} == {2, 3}
+
+
+def test_frozen_cohort_ignores_expansion_and_future_for_eligibility(tmp_path: Path) -> None:
+    """新候选和未来行为不能稀释权重或触发主体上限；新主体也不能混入。"""
+    rows = [
+        _interaction("a1", "a", 1, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("a2", "a", 2, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("a3", "a", 3, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("a4", "a", 4, "2025-09-01", "star_event", "2025-09-01"),
+        _interaction("b3", "b", 3, "2025-01-01", "star_event", "2025-01-01"),
+        _interaction("b4", "b", 4, "2025-01-01", "star_event", "2025-01-01"),
+    ]
+    data, _ = _build_dataset_with_config(
+        tmp_path,
+        rows,
+        DatasetConfig(
+            train_end=datetime(2025, 4, 1, tzinfo=UTC),
+            validation_end=datetime(2025, 8, 1, tzinfo=UTC),
+            maximum_repositories_per_subject=2,
+            freeze_cohort=True,
+        ),
+        cohort_ids=[1, 2],
+    )
+    assert {row["source_subject_id"] for row in data} == {"a"}
+    assert len(data) == 4
+    assert all(row["sample_weight"] == 0.5 for row in data)
+    assert next(row for row in data if row["repo_id"] == 4)["split"] == "test"
+
+
+def test_frozen_cohort_requires_reference_catalog(tmp_path: Path) -> None:
+    """缺参考目录必须阻断，不能悄悄退回动态人群。"""
+    with pytest.raises(ValueError, match="cohort_repositories"):
+        _build_dataset_with_config(
+            tmp_path,
+            [],
+            DatasetConfig(
+                train_end=datetime(2025, 4, 1, tzinfo=UTC),
+                validation_end=datetime(2025, 8, 1, tzinfo=UTC),
+                freeze_cohort=True,
+            ),
+        )
 
 
 def test_collapses_repeated_subject_repo_to_first_star_event(tmp_path: Path) -> None:
@@ -279,6 +436,7 @@ def _build_dataset_with_config(
     tmp_path: Path,
     rows: list[dict[str, object]],
     config: DatasetConfig,
+    cohort_ids: list[int] | None = None,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     interactions_path = tmp_path / "interactions.parquet"
@@ -291,12 +449,17 @@ def _build_dataset_with_config(
         ),
         repositories_path,
     )
+    inputs = [
+        artifact_for(interactions_path, "canonical_interactions", {}),
+        artifact_for(repositories_path, "canonical_repositories", {}),
+    ]
+    if cohort_ids is not None:
+        reference = tmp_path / "reference.parquet"
+        pq.write_table(pa.table({"repo_id": cohort_ids}), reference)
+        inputs.append(artifact_for(reference, "cohort_repositories", {}))
     artifacts = DuckDBDatasetBuilder(config).build(
         TaskContext("run", tmp_path / "workspace", "sha256:test", 7),
-        [
-            artifact_for(interactions_path, "canonical_interactions", {}),
-            artifact_for(repositories_path, "canonical_repositories", {}),
-        ],
+        inputs,
     )
     dataset_path = Path(
         next(item for item in artifacts if item.kind == "training_dataset").uri.removeprefix(

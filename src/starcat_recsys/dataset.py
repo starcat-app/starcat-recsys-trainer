@@ -18,6 +18,8 @@ from starcat_recsys.domain import parse_datetime
 from starcat_recsys.duckdb_runtime import connect_for_workspace
 from starcat_recsys.interfaces import Artifact, TaskContext
 
+EVENT_IDENTITY_POLICY = "gh_archive_watch_event_v2"
+
 
 @dataclass(frozen=True, slots=True)
 class DatasetConfig:
@@ -30,6 +32,7 @@ class DatasetConfig:
     minimum_repository_interactions: int = 1
     maximum_repository_count: int | None = None
     subject_sample_rate: float = 1.0
+    freeze_cohort: bool = False
 
     def __post_init__(self) -> None:
         train_end = parse_datetime(self.train_end)
@@ -75,6 +78,11 @@ class DuckDBDatasetBuilder:
             connection.read_parquet(_artifact_path(repository).as_posix()).create_view(
                 "source_repositories"
             )
+            if self._config.freeze_cohort:
+                reference = _single_artifact(inputs, "cohort_repositories")
+                connection.read_parquet(_artifact_path(reference).as_posix()).create_view(
+                    "cohort_repositories"
+                )
             self._build_tables(connection)
             connection.execute(
                 "COPY (SELECT * FROM final_dataset ORDER BY source_subject_id, "
@@ -92,7 +100,11 @@ class DuckDBDatasetBuilder:
         dataset_artifact = artifact_for(
             dataset_path,
             "training_dataset",
-            {"row_count": quality["final_rows"], "split_counts": quality["split_counts"]},
+            {
+                "row_count": quality["final_rows"],
+                "split_counts": quality["split_counts"],
+                "event_identity_policy": EVENT_IDENTITY_POLICY,
+            },
         )
         repository_artifact = artifact_for(
             repository_path,
@@ -105,6 +117,7 @@ class DuckDBDatasetBuilder:
                 "schema_version": 1,
                 "run_id": context.run_id,
                 "config_hash": context.config_hash,
+                "event_identity_policy": EVENT_IDENTITY_POLICY,
                 "config": {
                     "train_end": self._config.train_end.isoformat(),
                     "validation_end": self._config.validation_end.isoformat(),
@@ -119,8 +132,14 @@ class DuckDBDatasetBuilder:
                     ),
                     "maximum_repository_count": self._config.maximum_repository_count,
                     "subject_sample_rate": self._config.subject_sample_rate,
+                    "freeze_cohort": self._config.freeze_cohort,
                 },
                 **quality,
+                "cohort_catalog_checksum": (
+                    _single_artifact(inputs, "cohort_repositories").checksum
+                    if self._config.freeze_cohort
+                    else None
+                ),
             },
         )
         return [dataset_artifact, repository_artifact]
@@ -187,13 +206,22 @@ class DuckDBDatasetBuilder:
                OR i.observed_at = s.observed_at
             """
         )
+        # 本地 Raw 已证实跨年份复用 WatchEvent ID，不能让未来无关事件删除训练历史。
+        # 只为 GH Archive Star 追加语义身份；相同事件重试仍取最新观测，其他来源的
+        # ID 去重与上面的最新快照规则不变。后续主体-仓库首次 Star 仍是独立的聚合。
         connection.execute(
             """
             CREATE TEMP TABLE deduplicated_interactions AS
             SELECT * EXCLUDE (row_number)
             FROM (
                 SELECT *, row_number() OVER (
-                    PARTITION BY source, source_record_id
+                    PARTITION BY source, source_record_id,
+                        CASE WHEN source = 'gh_archive' AND relation_type = 'star_event'
+                            THEN source_subject_id END,
+                        CASE WHEN source = 'gh_archive' AND relation_type = 'star_event'
+                            THEN repo_id END,
+                        CASE WHEN source = 'gh_archive' AND relation_type = 'star_event'
+                            THEN occurred_at END
                     ORDER BY observed_at DESC
                 ) AS row_number
                 FROM current_interactions
@@ -278,6 +306,13 @@ class DuckDBDatasetBuilder:
             )
             """
         )
+        # 受控扩容只用参考目录内的训练期计数决定准入和权重。新增候选或未来 Star
+        # 都不能将同一主体踢出人群，或悄悄稀释其旧信号；默认管道语义保持不变。
+        cohort_condition = (
+            "AND repo_id IN (SELECT repo_id FROM cohort_repositories)"
+            if self._config.freeze_cohort
+            else ""
+        )
         connection.execute(
             f"""
             CREATE TEMP TABLE subject_statistics AS
@@ -289,17 +324,27 @@ class DuckDBDatasetBuilder:
                     WHERE occurred_at IS NULL
                        OR occurred_at < TIMESTAMPTZ '{train_end}'
                 ) AS train_repo_count
+                ,count(DISTINCT repo_id) FILTER (
+                    WHERE (occurred_at IS NULL OR occurred_at < TIMESTAMPTZ '{train_end}')
+                    {cohort_condition}
+                ) AS cohort_train_repo_count
             FROM unique_subject_repositories
             GROUP BY source, source_subject_id
             """
         )
-        maximum_predicate = f"AND total_repo_count <= {maximum}" if maximum is not None else ""
+        count_column = (
+            "cohort_train_repo_count" if self._config.freeze_cohort else "total_repo_count"
+        )
+        weight_column = (
+            "cohort_train_repo_count" if self._config.freeze_cohort else "train_repo_count"
+        )
+        maximum_predicate = f"AND {count_column} <= {maximum}" if maximum is not None else ""
         connection.execute(
             f"""
             CREATE TEMP TABLE eligible_subjects AS
             SELECT *
             FROM subject_statistics
-            WHERE total_repo_count >= {minimum}
+            WHERE {count_column} >= {minimum}
               {maximum_predicate}
             """
         )
@@ -308,8 +353,8 @@ class DuckDBDatasetBuilder:
             CREATE TEMP TABLE final_dataset AS
             SELECT
                 i.*,
-                CAST(i.source_weight / log2(2 + s.train_repo_count) AS FLOAT) AS sample_weight,
-                s.train_repo_count >= {minimum} AS training_eligible,
+                CAST(i.source_weight / log2(2 + s.{weight_column}) AS FLOAT) AS sample_weight,
+                s.{weight_column} >= {minimum} AS training_eligible,
                 CASE
                     WHEN i.occurred_at IS NULL THEN 'train'
                     WHEN i.occurred_at < TIMESTAMPTZ '{train_end}' THEN 'train'
@@ -337,7 +382,8 @@ class DuckDBDatasetBuilder:
         report["training_eligible_subject_count"] = _count(
             connection,
             "eligible_subjects",
-            f"train_repo_count >= {self._config.minimum_repositories_per_subject}",
+            f"{'cohort_train_repo_count' if self._config.freeze_cohort else 'train_repo_count'}"
+            f" >= {self._config.minimum_repositories_per_subject}",
         )
         report["missing_occurred_at_rows"] = _count(
             connection, "final_dataset", "occurred_at IS NULL"
