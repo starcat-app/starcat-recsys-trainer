@@ -1,0 +1,61 @@
+run_id: gharchive-local-2016-20261031-v15-fixed-split
+workspace: /Volumes/T0/Starcat/training/gharchive-local-2016-20261031-v15-fixed-split
+registry: /Volumes/T0/Starcat/training/registry
+random_seed: 42
+
+# v15 复用 v14 刚生成的完整 Canonical：只对比“数据水位更新”，
+# 不重扫 Raw，也不重新请求 GitHub metadata。
+resume_canonical_manifest: /Volumes/T0/Starcat/training/gharchive-local-2016-20261031-v14/runs/gharchive-local-2016-20261031-v14/canonical/manifest.json
+
+sources:
+  - type: local_lake_partitions
+    workspace: /Volumes/T0/Starcat/bigquery/watch-events-2016-2026
+    dataset: watch_events
+    start_date: "2016-01-01"
+    end_date: "2026-10-31"
+    verify_checksums: true
+  - type: github_api
+    repo_ids_from_canonical: true
+    repository_limit: 5000
+    maximum_requests: 5000
+    cache_directory: /Volumes/T0/Starcat/training/cache/github-metadata
+    reuse_cached_payloads: true
+    token_env: GITHUB_TOKEN
+    api_version: "2026-03-10"
+
+dataset:
+  # 固定 v12 的切分点，隔离“时间窗口变化”的影响，只观察 Raw 数据更新效果。
+  train_end: "2026-01-01T00:00:00Z"
+  validation_end: "2026-05-01T00:00:00Z"
+  minimum_repositories_per_subject: 5
+  maximum_repositories_per_subject: 200
+  minimum_repository_interactions: 20
+  maximum_repository_count: 5000
+  subject_sample_rate: 0.02
+
+training:
+  reference_time: "2026-01-01T00:00:00Z"
+  top_k: 100
+  svd_components: 64
+  svd_maximum_interactions: 2000000
+  svd_maximum_subjects: 100000
+  svd_maximum_repositories: 5000
+  svd_neighbor_batch_size: 500
+  half_life_days: 365
+  legacy_time_weight: 0.35
+  shrinkage: 10
+  minimum_support: 2
+  maximum_repositories_per_subject: 100
+  maximum_pair_observations: 50000000
+  run_ablations: false
+
+evaluation:
+  split: validation
+  k: 20
+  maximum_subjects: 10000
+
+publish:
+  # 只安装本地 Registry，不发布生产 Recommend API。
+  model_version: gharchive-local-2016-20261031-v15-fixed-split
+  selected_model: costar
+  metric_gates: {}
