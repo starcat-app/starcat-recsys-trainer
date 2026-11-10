@@ -1,0 +1,15 @@
+# 复制到用户私有目录后填写现有产物位置；真实路径和凭据不进仓库。
+# 本文件只描述固定配方的输入，没有降低门槛或强制发布开关。
+volume_root: /local/data-volume
+workspace: /local/data-volume/training/weekly
+state_file: /local/private-state/weekly.json
+raw_root: /local/data-volume/raw/gh_archive
+frozen_training_dataset: /local/frozen/interactions.parquet
+core_catalog: /local/frozen/repositories.parquet
+expanded_catalog: /local/expanded/repositories.parquet
+initial_bundle: /local/last-published/bundle
+initial_watermark: '2026-10-31'
+api_root: /local/starcat-recommend-api
+base_url: https://starcat-api.fly.dev
+publish_key_file: /local/private/recommend-publish.key
+query_key_file: /local/private/recommend-query.key

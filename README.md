@@ -126,6 +126,12 @@ supports/scripts/run-history-daily-sync.sh
 统一入口会先补 Raw，再从生产 History 水位构建并发布相邻 Delta。Trainer 只负责 Raw 下载，
 Raw 文件存在或 checkpoint 前进都不等于 History API 已经使用新数据。
 
+## 每周自动训练
+
+每周日北京时间 11:00 使用本机 LaunchAgent 训练候选，通过数据、同输入新旧模型质量、
+覆盖与隔离 API 门槛后自动发布，失败保留旧模型；登录后可补跑漏掉的周次。
+配置、安装、状态查询及恢复见 [每周自动训练运维指南](docs/每周自动训练运维指南.md)。
+
 ## 管道结构
 
 ```text
