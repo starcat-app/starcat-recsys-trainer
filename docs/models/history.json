@@ -715,7 +715,7 @@
       "model_version": "weekly-20261114-20261115T030011586965-hybrid",
       "raw_watermark": "2026-11-14",
       "recommendation_edges": 1350558,
-      "release_url": null,
+      "release_url": "https://github.com/starcat-app/starcat-recsys-trainer/releases/tag/model-weekly-20261114-20261115T030011586965-hybrid",
       "repositories": 18839,
       "run_id": "weekly-20261114-20261115T030011586965",
       "selected_model": "hybrid_25",
