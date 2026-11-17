@@ -31,6 +31,8 @@ class BundleConfig:
     git_commit: str = "unknown"
     install: bool = True
     metrics_scope: str = "same_model"
+    training: dict[str, Any] | None = None
+    evaluation_window: dict[str, str | None] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _validate_version(self.model_version)
@@ -91,6 +93,14 @@ class ServingBundlePublisher:
             "random_seed": context.random_seed,
             "metrics": metrics,
             "metrics_scope": self._config.metrics_scope,
+            "training": self._config.training,
+            "evaluation": {
+                **{key: metrics_document.get(key) for key in ("split", "k", "maximum_seeds")},
+                "dataset_checksum": metrics_document.get(
+                    "evaluation_dataset_checksum", metrics_document.get("dataset_checksum")
+                ),
+                **self._config.evaluation_window,
+            },
             "evaluation_checksum": metrics_artifact.checksum,
             "evaluated_model_checksum": metrics_document.get("model_checksums", {}).get(
                 self._config.selected_model

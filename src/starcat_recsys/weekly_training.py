@@ -25,6 +25,7 @@ from starcat_recsys.bundle import (
     verify_bundle,
 )
 from starcat_recsys.interfaces import Artifact, TaskContext
+from starcat_recsys.model_metadata import describe_training, git_revision, timestamp
 from starcat_recsys.recommendations import RECOMMENDATION_SCHEMA, artifact_path
 from starcat_recsys.trainers.content import ContentConfig, ContentTrainer, fuse_models
 from starcat_recsys.trainers.costar import CoStarConfig, CoStarTrainer
@@ -37,6 +38,7 @@ def train_model(
     content: Artifact | None = None,
 ) -> list[Artifact]:
     """复用已验收参数和严格配对预算；预算不足直接失败，不静默换训练主体。"""
+    started_at = timestamp()
     costar = CoStarTrainer(
         CoStarConfig(
             reference_time=reference_time,
@@ -47,7 +49,22 @@ def train_model(
         )
     ).train(context, inputs)[0]
     content = content or ContentTrainer(ContentConfig()).train(context, inputs)[0]
-    return [content, fuse_models(context, costar, content, content_weight=0.25)]
+    hybrid = fuse_models(context, costar, content, content_weight=0.25)
+    hybrid.metadata["training"] = describe_training(
+        context,
+        next(item for item in inputs if item.kind == "training_dataset"),
+        started_at,
+        timestamp(),
+        {
+            "content_weight": 0.25,
+            "half_life_days": 365,
+            "minimum_support": 0.5,
+            "maximum_repositories_per_subject": 100,
+            "maximum_pair_observations": 200_000_000,
+            "top_k": 100,
+        },
+    )
+    return [content, hybrid]
 
 
 def export_incumbent(context: TaskContext, bundle: Path) -> Artifact:
@@ -109,7 +126,22 @@ def build_bundle(
     """候选只在 run 内落盘；补齐水位后封存摘要，不修改共享 Registry。"""
     scope = "pre_refit" if refit else "same_model"
     artifact = ServingBundlePublisher(
-        BundleConfig(version, selected_model="hybrid_25", install=False, metrics_scope=scope),
+        BundleConfig(
+            version,
+            selected_model="hybrid_25",
+            install=False,
+            metrics_scope=scope,
+            git_commit=git_revision(),
+            training=model.metadata.get("training"),
+            evaluation_window={
+                "train_end": next(
+                    item.metadata["train_end"] for item in inputs if item.kind == "training_dataset"
+                ),
+                "data_end": next(
+                    item.metadata["data_end"] for item in inputs if item.kind == "training_dataset"
+                ),
+            },
+        ),
         LocalModelRegistry(context.workspace / "unused-registry"),
     ).publish(context, [model, metrics, index, expanded])[0]
     bundle = artifact_path(artifact).parent

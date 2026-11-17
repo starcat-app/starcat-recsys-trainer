@@ -30,6 +30,7 @@ from starcat_recsys.interfaces import (
     SourceConnector,
     TaskContext,
 )
+from starcat_recsys.model_metadata import describe_training, timestamp
 from starcat_recsys.publishers import RecommendAPIBundlePublisher, RecommendAPIPublishConfig
 from starcat_recsys.sources.bigquery import BigQueryConfig, BigQueryWatchEventSource
 from starcat_recsys.sources.bigquery_push import (
@@ -47,6 +48,8 @@ from starcat_recsys.sources.starcat_collection import (
     StarcatCollectionAPISource,
     StarcatCollectionConfig,
 )
+from starcat_recsys.trainers.content import ContentConfig, ContentTrainer, fuse_models
+from starcat_recsys.trainers.content_index import ContentIndexTrainer
 from starcat_recsys.trainers.costar import CoStarConfig, CoStarTrainer
 from starcat_recsys.trainers.popular import PopularConfig, PopularTrainer
 from starcat_recsys.trainers.svd import SVDConfig, SVDTrainer
@@ -173,6 +176,7 @@ def run_pipeline(config_path: Path) -> Artifact:
     reference_time = _training_reference_time(training_config, train_end)
     top_k = int(training_config.get("top_k", 100))
     models: list[Artifact] = []
+    training_started_at = timestamp()
     models.extend(
         executor.execute(
             "train:popular", lambda: PopularTrainer(PopularConfig(top_k)).train(context, dataset)
@@ -235,6 +239,34 @@ def run_pipeline(config_path: Path) -> Artifact:
             )
         )
 
+    content_indexes: list[Artifact] = []
+    if training_config.get("content_weight") is not None:
+        content = executor.execute(
+            "train:content",
+            lambda: ContentTrainer(ContentConfig(top_k=top_k)).train(context, dataset),
+        )[0]
+        costar = next(item for item in models if item.metadata["model"] == "costar")
+        hybrid = executor.execute(
+            "train:hybrid",
+            lambda: fuse_models(
+                context,
+                costar,
+                content,
+                content_weight=float(training_config["content_weight"]),
+                top_k=top_k,
+            ),
+        )
+        models.extend([content, hybrid])
+        content_indexes = executor.execute(
+            "train:content-index", lambda: ContentIndexTrainer().train(context, dataset)
+        )
+    training = describe_training(
+        context,
+        next(item for item in dataset if item.kind == "training_dataset"),
+        training_started_at,
+        timestamp(),
+        training_config,
+    )
     evaluation_config = _required_dict(document, "evaluation")
     reference_metrics = evaluation_config.get("reference_metrics")
     if reference_metrics is not None:
@@ -261,6 +293,11 @@ def run_pipeline(config_path: Path) -> Artifact:
                     split=str(evaluation_config.get("split", "validation")),
                     k=int(evaluation_config.get("k", 20)),
                     maximum_subjects=int(evaluation_config.get("maximum_subjects", 10_000)),
+                    maximum_seeds=(
+                        int(evaluation_config["maximum_seeds"])
+                        if evaluation_config.get("maximum_seeds") is not None
+                        else None
+                    ),
                 )
             ).evaluate(context, [*dataset, *models]),
         )
@@ -275,11 +312,17 @@ def run_pipeline(config_path: Path) -> Artifact:
             git_commit=_git_commit(),
             install=install,
             metrics_scope="pre_refit" if reference_metrics is not None else "same_model",
+            training=training,
+            evaluation_window={
+                "train_end": train_end.isoformat(),
+                "validation_end": validation_end.isoformat(),
+            },
         ),
         LocalModelRegistry(registry_root),
     )
     bundle = executor.execute(
-        "publish", lambda: publisher.publish(context, [*dataset, *models, *metrics])
+        "publish",
+        lambda: publisher.publish(context, [*dataset, *models, *metrics, *content_indexes]),
     )[0]
     delivery: Artifact | None = None
     recommend_api_config = _optional_dict(publish_config, "recommend_api")

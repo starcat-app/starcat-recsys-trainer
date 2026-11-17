@@ -106,6 +106,11 @@ def test_runs_end_to_end_pipeline_and_cli_query(tmp_path: Path, capsys: object) 
 
     bundle = Path(artifact.metadata["bundle_uri"].removeprefix("file://"))
     assert bundle.is_dir()
+    bundle_manifest = json.loads((bundle / "manifest.json").read_text())
+    assert bundle_manifest["training"]["interactions"] == 6
+    assert bundle_manifest["training"]["subjects"] == 3
+    assert bundle_manifest["training"]["completed_at"] <= bundle_manifest["created_at"]
+    assert bundle_manifest["evaluation"]["train_end"] == "2025-06-01T00:00:00+00:00"
     manifest = json.loads((tmp_path / "workspace/runs/demo-run/run-manifest.json").read_text())
     assert all(task["status"] == "completed" for task in manifest["tasks"])
     assert main(["bundle", "verify", bundle.as_posix()]) == 0

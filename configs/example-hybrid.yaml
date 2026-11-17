@@ -1,0 +1,36 @@
+# 小型合成数据完整验证 co-star + 内容融合；不调用 GitHub 或 BigQuery。
+run_id: example-hybrid-v1
+workspace: ../workspace/hybrid-demo
+registry: ../workspace/registry
+random_seed: 42
+sources:
+  - type: local_file
+    path: ../examples/data/starcat-interactions.jsonl
+    source: starcat_snapshot
+    kind: raw_interactions
+  - type: local_file
+    path: ../examples/data/github-repositories.jsonl
+    source: github_api
+    kind: raw_repositories
+dataset:
+  train_end: "2025-06-01T00:00:00Z"
+  validation_end: "2025-12-01T00:00:00Z"
+  minimum_repositories_per_subject: 2
+training:
+  reference_time: "2025-06-01T00:00:00Z"
+  top_k: 3
+  train_svd: false
+  run_ablations: false
+  half_life_days: 365
+  shrinkage: 1
+  minimum_support: 0
+  maximum_repositories_per_subject: 100
+  content_weight: 0.25
+evaluation:
+  split: validation
+  k: 3
+publish:
+  model_version: example-hybrid-v1
+  selected_model: hybrid_25
+  metric_gates:
+    evaluated_subjects: 1

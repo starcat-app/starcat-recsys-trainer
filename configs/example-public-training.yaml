@@ -1,0 +1,51 @@
+# 用户自己的公开 GH Archive 数据；无需官方固定主体、Collection 或 Starcat App。
+# 路径相对本配置文件。复制配置后更新时间范围、切分和 run/model 标识。
+run_id: public-202610-v1
+workspace: ../workspace/public-training
+registry: ../workspace/registry
+random_seed: 42
+sources:
+  - type: local_lake_partitions
+    workspace: ../workspace/watch-events
+    dataset: watch_events
+    start_date: "2026-10-01"
+    end_date: "2026-10-31"
+    verify_checksums: true
+  - type: github_api
+    repo_ids_from_canonical: true
+    repository_limit: 5000
+    maximum_requests: 5000
+    cache_directory: ../workspace/cache/github-metadata
+    reuse_cached_payloads: false
+    token_env: GITHUB_TOKEN
+    api_version: "2026-03-10"
+dataset:
+  train_end: "2026-10-15T00:00:00Z"
+  validation_end: "2026-10-23T00:00:00Z"
+  minimum_repositories_per_subject: 5
+  maximum_repositories_per_subject: 200
+  minimum_repository_interactions: 5
+  maximum_repository_count: 5000
+  subject_sample_rate: 0.02
+training:
+  reference_time: "2026-10-15T00:00:00Z"
+  top_k: 100
+  train_svd: false
+  run_ablations: false
+  half_life_days: 365
+  shrinkage: 10
+  minimum_support: 0.5
+  maximum_repositories_per_subject: 100
+  maximum_pair_observations: 200000000
+  require_full_pair_budget: true
+  content_weight: 0.25
+evaluation:
+  split: test
+  k: 20
+  maximum_subjects: 10000
+  maximum_seeds: 20
+publish:
+  model_version: public-202610-v1
+  selected_model: hybrid_25
+  metric_gates:
+    evaluated_subjects: 1
