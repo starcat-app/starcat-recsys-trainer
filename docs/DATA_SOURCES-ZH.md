@@ -72,6 +72,8 @@ GH Archive 也提供 `https://data.gharchive.org/YYYY-MM-DD-H.json.gz` 小时归
 设置自己的 `GITHUB_TOKEN`。公开训练配置按仓库 ID 获取有界目录并维护 ETag 缓存，
 过滤私有、disabled 及其他不可用仓库。Token 能访问某个私有仓库，不代表可以把它
 加入公开模型。仓库文本保留其来源，代码的 MIT License 不替代上游数据或文本条款。
+公开描述和 topics 可能包含作者主动公布的联系邮箱；这些上游文本不属于训练用户身份信息，
+模型包不承诺任意公开文本中都没有邮箱。
 
 Raw、凭据、私有运行配置、训练主体和逐主体评估结果不进入 Git 或 Releases。
 公开成果只记录聚合计数、指标、时间范围及摘要；每个模型的限制见模型说明。
@@ -80,8 +82,12 @@ Raw、凭据、私有运行配置、训练主体和逐主体评估结果不进�
 
 `scripts/download-{watch,push}-events.sh` 是面向外接卷、screen、caffeinate 的可选封装。
 它们要求 `STARCAT_BQ_BILLING_PROJECT` 或被 Git 忽略的纯文本
-`configs/billing-project.local`，在其他机器使用前应设置 `STARCAT_WATCH_*` /
-`STARCAT_PUSH_*` 路径。上面的通用 CLI 不依赖这些脚本或维护者的磁盘布局。
+`configs/billing-project.local`。数据卷默认使用通用示例 `/Volumes/StarcatData`；
+用 `STARCAT_WATCH_VOLUME_ROOT` / `STARCAT_PUSH_VOLUME_ROOT` 覆盖，或在被 Git 忽略的
+`configs/data-volume.local` 中保存一行自己的卷路径。环境变量优先，私有配置文件建议设为
+`600`。脚本只读取纯文本，不执行其中的 shell 内容，启动前仍检查独立磁盘是否挂载。
+其他目录可通过 `STARCAT_WATCH_*` / `STARCAT_PUSH_*` 覆盖。
+上面的通用 CLI 不依赖这些脚本或维护者的磁盘布局。
 
 ## 官方资料
 

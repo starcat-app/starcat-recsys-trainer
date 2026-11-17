@@ -79,6 +79,9 @@ catalog through public repository IDs and maintains an ETag cache. Private,
 disabled and otherwise unavailable repositories are filtered. Token access does
 not authorize training on private repositories. Repository text and its original
 provenance remain associated with the originating public project.
+Public descriptions and topics may contain contact email addresses deliberately
+published by repository authors. These upstream texts are not training-user
+identities; the model does not promise that every public text is email-free.
 
 Raw data, credentials, private run/config snapshots, dataset identities and
 subject-level observations stay outside Git and Releases. The code license is
@@ -89,8 +92,13 @@ See each model card for the dataset window and evaluation limitations.
 
 `scripts/download-{watch,push}-events.sh` are optional Mac wrappers for external
 volumes, screen and caffeinate. They require `STARCAT_BQ_BILLING_PROJECT` or an
-ignored plain-text `configs/billing-project.local`. Override their documented
-`STARCAT_WATCH_*` / `STARCAT_PUSH_*` paths before using them on another machine.
+ignored plain-text `configs/billing-project.local`. The generic example volume is
+`/Volumes/StarcatData`. Override it with `STARCAT_WATCH_VOLUME_ROOT` /
+`STARCAT_PUSH_VOLUME_ROOT`, or store your volume path as one line in the ignored
+`configs/data-volume.local` file, preferably with mode `600`. Environment variables
+take precedence. The file is read as plain text, never executed as shell code;
+startup still checks that the volume is mounted as an independent disk.
+Other paths can be overridden with `STARCAT_WATCH_*` / `STARCAT_PUSH_*`.
 The portable commands above do not depend on these scripts or maintainer disks.
 
 ## Primary references

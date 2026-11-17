@@ -4,12 +4,14 @@ All notable changes to Starcat Recommendation Pipeline are documented here.
 
 ## Unreleased
 
+- 将历史训练配置改为相对路径，下载脚本支持私有数据卷配置，周训练示例默认连接本地推荐服务。
+- 清理公开文档中的本机路径和生产资源标识，补充公开仓库描述中联系方式的隐私边界。
 - 新增既有 WatchEvent / PushEvent Raw 只读检查命令，输出不含真实路径的 Dataset、Partition 和 Storage Catalog 快照。
 - 新增 Admin Console 受控 SQL Lab CLI、JSON 额度/下载状态和固定生命周期动作；SQL 与结果不持久化到控制台 Job Catalog。
 - 双下载状态批量读取时只查询一次共享 Project 月度额度，避免控制台轮询重复消耗元数据查询。
 - 新增 PushEvent 五字段按日下载 CLI，与 WatchEvent 使用独立 raw 目录、checkpoint 和后台任务。
 - WatchEvent / PushEvent 下载任务定时记录月度 BigQuery Project 用量，并在 80% 警告、90% 自动停止。
-- 新增 WatchEvent 后台下载管理脚本，统一提供启动、停止、重启、状态、日志、防休眠和 T0 挂载保护。
+- 新增 WatchEvent 后台下载管理脚本，统一提供启动、停止、重启、状态、日志、防休眠和外接卷挂载保护。
 - WatchEvent 下载遇到明确缺失的 GH Archive 历史日表时记录为空分区并继续，不再阻塞整个十年任务。
 - 新增 WatchEvent 独立下载 CLI、分区断点续传、原子 checkpoint、瞬时错误重试与累计扫描预算门禁。
 - 新增 GH Archive BigQuery `PushEvent` 仓库基础目录采集，并由 GitHub API 对 Top N 候选执行权威 metadata 覆盖。

@@ -2,7 +2,7 @@
 
 ## 1. 验证目标
 
-验证已经下载到 `/Volumes/T0` 的 BigQuery Raw 可以在不重复查询 BigQuery、不复制 Raw、
+验证已经下载到外接数据卷的 BigQuery Raw 可以在不重复查询 BigQuery、不复制 Raw、
 不占用系统盘的前提下，完成 Canonical、Dataset、Popular/SVD/co-star、离线评估和
 ServingBundle 查询全链路。
 
@@ -11,7 +11,7 @@ ServingBundle 查询全链路。
 ## 2. 数据流向
 
 ```text
-/Volumes/T0/Starcat/bigquery/*/raw（日分区，只读）
+<data-root>/bigquery/*/raw（日分区，只读）
   -> LocalLakePartitionSource（checkpoint、schema、行数、checksum）
   -> DuckDB Canonical（WatchEvent 主体 SHA-256、PushEvent 仓库目录）
   -> DuckDB Dataset（去重、时间切分、支持度、Top 仓库、稳定主体抽样）
@@ -64,8 +64,8 @@ Coverage 仍低于 SVD，后续可通过候选融合改进，但不影响当前�
 
 ## 5. 产物
 
-- 全年 workspace：`/Volumes/T0/Starcat/training/gharchive-smoke-2016-v3`
-- 全年 Bundle：`/Volumes/T0/Starcat/training/registry/versions/gharchive-smoke-2016-v3`
+- 全年 workspace：`<data-root>/training/gharchive-smoke-2016-v3`
+- 全年 Bundle：`<data-root>/training/registry/versions/gharchive-smoke-2016-v3`
 - Workspace 大小：约 1.4 GiB
 - Bundle 大小：约 1.5 MiB
 

@@ -45,7 +45,7 @@ git diff --check
 - BigQuery 查询会消耗配额并可能产生费用。未经 dong4j 针对本次运行明确授权，不得
   执行 BigQuery 采集、SQL Lab 实查或 `download-*-events.sh start/restart`。
 - 未经明确授权不得运行 `make demo`、任何 `pipeline run`、正式训练、全量 Raw 扫描，
-  也不得在 `/Volumes/T0` 或其他外接存储创建、移动、覆盖数据。
+  也不得在操作者的数据卷或其他外接存储创建、移动、覆盖数据。
 - 未经明确授权不得生成、替换、上传或激活 ServingBundle，不得调用
   `RecommendAPIBundlePublisher`，不得向 `starcat-recommend-api /api/v2` 发布。
 - 不得打印或提交 Token、ADC、HMAC key、发布密钥、真实数据路径、匿名主体原值或服务端
