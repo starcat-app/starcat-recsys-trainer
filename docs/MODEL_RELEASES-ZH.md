@@ -36,6 +36,8 @@ uv run starcat-recsys release prepare \
 同一个 Bundle 重试打包的 ZIP 字节保持一致；不同内容必须用新版本。被阻止、失败或
 未完成校验的产物不能作为正式模型发布。旧 Bundle 若含有失效的额外校验项，应先
 调查并产出新的合法版本，不能改写旧版本后冒用原编号。
+旧包若包含仍能通过完整校验的 AppleDouble `._*` 文件，打包器仅从传输校验清单中
+剔除这些文件系统元数据；原 manifest、SQLite、源校验文件和模型版本保持不变。
 
 检查资产和模型卡后，使用自己的仓库及具有该仓库 **Contents: write** 权限的
 GitHub Token。Token 从环境读取，不复用推荐查询 Key 或模型激活 Key：

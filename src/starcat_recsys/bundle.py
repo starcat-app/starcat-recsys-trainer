@@ -113,10 +113,10 @@ class ServingBundlePublisher:
         if content_indexes:
             manifest["content_fallback"] = content_indexes[0].metadata
         write_json_atomic(staging / "manifest.json", manifest)
+        # 外接卷可能自动生成 AppleDouble 文件；文件系统元数据不属于模型校验契约。
         checksums = {
-            path.name: sha256_file(path)
-            for path in sorted(staging.iterdir())
-            if path.is_file() and path.name != "checksums.json"
+            name: sha256_file(staging / name)
+            for name in ("manifest.json", "recommendations.sqlite")
         }
         write_json_atomic(staging / "checksums.json", checksums)
         verify_bundle(staging)

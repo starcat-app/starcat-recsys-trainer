@@ -43,7 +43,9 @@ def prepare_release(
     manifest = verify_bundle(bundle)
     version = identifier(str(manifest["model_version"]))
     checksums = json.loads((bundle / "checksums.json").read_text())
-    if set(checksums) != {"manifest.json", "recommendations.sqlite"}:
+    required = {"manifest.json", "recommendations.sqlite"}
+    extras = set(checksums) - required
+    if not required.issubset(checksums) or extras - {"._" + name for name in required}:
         raise ValueError("分发包必须恰好校验 manifest.json 与 recommendations.sqlite")
     public = record.copy() if record else bundle_record(bundle)
     if public.get("model_version") != version or public.get("manifest_checksum") != sha256_file(
@@ -60,6 +62,12 @@ def prepare_release(
             entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
             entry.compress_type = zipfile.ZIP_DEFLATED
             entry.external_attr = 0o100644 << 16
+            if name == "checksums.json" and extras:
+                # 旧包先完整校验，再仅为传输清单移除已验证的 AppleDouble 项。
+                # 原 manifest、SQLite、源校验文件及模型版本均不改写。
+                content = {key: checksums[key] for key in sorted(required)}
+                zipped.writestr(entry, json.dumps(content, sort_keys=True, indent=2) + "\n")
+                continue
             with (bundle / name).open("rb") as source, zipped.open(entry, "w") as destination:
                 shutil.copyfileobj(source, destination)
     if archive.stat().st_size > MAX_ARCHIVE_BYTES:

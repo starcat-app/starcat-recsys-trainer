@@ -39,6 +39,9 @@ Repeated packaging of the same bundle produces identical ZIP bytes. Changed cont
 require a new model version. Blocked, failed or invalid bundles cannot become model
 Releases. Investigate historical checksum failures and produce a new valid version;
 do not edit an immutable old bundle and reuse its version.
+For old bundles with fully verified AppleDouble `._*` entries, packaging omits that
+filesystem metadata from the transport checksum list. The original manifest, SQLite,
+source checksum file and model version remain unchanged.
 
 Inspect the assets, then supply a GitHub token with **Contents: write** for your repository.
 This credential is separate from both the serving query key and the activation key:

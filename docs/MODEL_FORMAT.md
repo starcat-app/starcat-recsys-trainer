@@ -18,6 +18,8 @@ the TF-IDF content index. The default compressed upload limit is 512 MiB.
 包内 checksum 校验原始文件，Release 的 SHA256SUMS 校验下载资产。原始事件、
 训练主体、Collection 快照、机器路径和凭据均不属于分发包。旧模型保持字节不变，
 历史补充信息放在成果索引中，不回写旧 manifest。
+旧包经完整校验的 AppleDouble `._*` 项可从传输校验清单中移除；原始模型文件及源包
+不变，ZIP 内仍严格只有上述三个文件。
 
 ## Manifest schema 1
 

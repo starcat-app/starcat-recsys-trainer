@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 from starcat_recsys.artifacts import artifact_for, sha256_file, write_json_atomic
+from starcat_recsys.bundle import verify_bundle
 from starcat_recsys.cli import main
 from starcat_recsys.history_backfill import backfill_history
 from starcat_recsys.model_history import bundle_record, load_catalog, record_result, render_history
@@ -140,6 +141,38 @@ def test_release_resumes_partial_upload_and_never_replaces_assets(tmp_path: Path
         state["assets"][0]["digest"] = "sha256:different"
         with pytest.raises(ValueError, match="拒绝覆盖"):
             publisher.publish(package)
+
+
+def test_release_omits_verified_appledouble_without_changing_source(tmp_path: Path) -> None:
+    """复现外接卷旧包：完整验证元数据后裁剪传输清单，模型文件与源包保持不变。"""
+    bundle = example_bundle(tmp_path / "bundle")
+    checksums = json.loads((bundle / "checksums.json").read_text())
+    for name in ("manifest.json", "recommendations.sqlite"):
+        metadata = bundle / ("._" + name)
+        metadata.write_bytes(b"filesystem metadata")
+        checksums[metadata.name] = sha256_file(metadata)
+    write_json_atomic(bundle / "checksums.json", checksums)
+    original = {path.name: path.read_bytes() for path in bundle.iterdir()}
+    package = prepare_release(bundle, tmp_path / "release")
+    with zipfile.ZipFile(package / "test-v1.zip") as archive:
+        assert set(archive.namelist()) == {
+            "manifest.json",
+            "recommendations.sqlite",
+            "checksums.json",
+        }
+        extracted = tmp_path / "extracted"
+        archive.extractall(extracted)
+    assert verify_bundle(extracted)["model_version"] == "test-v1"
+    assert set(json.loads((extracted / "checksums.json").read_text())) == {
+        "manifest.json",
+        "recommendations.sqlite",
+    }
+    for name in ("manifest.json", "recommendations.sqlite"):
+        assert (extracted / name).read_bytes() == original[name]
+    assert {path.name: path.read_bytes() for path in bundle.iterdir()} == original
+    (bundle / "._manifest.json").write_bytes(b"changed metadata")
+    with pytest.raises(ValueError, match="checksum"):
+        prepare_release(bundle, tmp_path / "invalid")
 
 
 def test_history_sync_merges_remote_and_updates_only_generated_files(tmp_path: Path) -> None:
