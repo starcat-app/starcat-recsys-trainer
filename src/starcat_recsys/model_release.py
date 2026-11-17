@@ -145,18 +145,21 @@ class GitHubDistribution:
         assets = document["assets"]
         response = self.client.get(self.root + f"/releases/tags/{tag}")
         if response.status_code == 404:
-            release = self._json(
-                "POST",
-                "/releases",
-                json={
-                    "tag_name": tag,
-                    "target_commitish": target,
-                    "name": version,
-                    "body": (package / "model-card.md").read_text(),
-                    "draft": True,
-                    "prerelease": False,
-                },
-            )
+            # 首次草稿尚未创建 Git tag，按 tag 查询会返回 404；必须先找已有草稿。
+            release = self._find_draft(tag)
+            if release is None:
+                release = self._json(
+                    "POST",
+                    "/releases",
+                    json={
+                        "tag_name": tag,
+                        "target_commitish": target,
+                        "name": version,
+                        "body": (package / "model-card.md").read_text(),
+                        "draft": True,
+                        "prerelease": False,
+                    },
+                )
         elif response.status_code == 200:
             release = response.json()
         else:
@@ -186,7 +189,8 @@ class GitHubDistribution:
                 response = self.client.post(
                     f"https://uploads.github.com/repos/{self.repository}/releases/{release_id}/assets",
                     params={"name": name},
-                    content=source,
+                    # BinaryIO 默认按行迭代，ZIP 会形成大量小写入；固定块流式上传。
+                    content=iter(lambda: source.read(1024 * 1024), b""),
                     headers={
                         "Content-Type": "application/octet-stream",
                         "Content-Length": str(path.stat().st_size),
@@ -210,6 +214,18 @@ class GitHubDistribution:
                 },
             )
         return str(release["html_url"])
+
+    def _find_draft(self, tag: str) -> dict[str, Any] | None:
+        """周模型累积后仍按页找未发布草稿，避免中断重试创建重复 Release。"""
+        page = 1
+        while True:
+            releases = self._json("GET", "/releases", params={"per_page": 100, "page": page})
+            for release in releases:
+                if release["tag_name"] == tag and release["draft"]:
+                    return dict(release)
+            if len(releases) < 100:
+                return None
+            page += 1
 
     def _asset_checksum(self, asset_id: int) -> str:
         """流式回读只用于缺少服务端 digest 的资产，不把模型包整体放进内存。"""

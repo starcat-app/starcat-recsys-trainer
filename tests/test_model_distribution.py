@@ -100,13 +100,21 @@ def test_release_resumes_partial_upload_and_never_replaces_assets(tmp_path: Path
         path = request.url.path
         if path.endswith("/releases/tags/model-test-v1"):
             return httpx.Response(
-                404 if state["release"] is None else 200,
+                404 if state["release"] is None or state["release"]["draft"] else 200,
                 json=state["release"] or {},
             )
+        if path.endswith("/releases") and request.method == "GET":
+            return httpx.Response(200, json=[state["release"]] if state["release"] else [])
         if path.endswith("/releases") and request.method == "POST":
             body = json.loads(request.content)
             assert body["draft"] is True
-            state["release"] = {"id": 1, "draft": True, "html_url": "https://example.test/model"}
+            assert state["release"] is None
+            state["release"] = {
+                "id": 1,
+                "tag_name": body["tag_name"],
+                "draft": True,
+                "html_url": "https://example.test/model",
+            }
             return httpx.Response(201, json=state["release"])
         if path.endswith("/assets") and request.method == "GET":
             return httpx.Response(200, json=state["assets"])
