@@ -1,194 +1,82 @@
-# Starcat 推荐数据与离线训练管道
+# Starcat recommendation trainer
 
-`starcat-recsys-trainer` 负责从多种数据源采集公开仓库行为和 metadata，转换为统一 Parquet 格式，完成数据质量检查、离线训练、时间留出评估和 ServingBundle 发布。
+[简体中文](README-ZH.md)
 
-当前仓库为私有项目，不提供生产 REST API。训练完成后可把已校验 Bundle 发布到 `starcat-recommend-api /api/v2`；在线服务只读 ServingBundle，与训练数据和匿名主体隔离。
+Train repository recommendations from public GitHub activity and ship an immutable
+ServingBundle to [starcat-recommend-api](https://github.com/starcat-app/starcat-recommend-api).
+This is an offline Python project; the separate Go service answers recommendations.
 
-## 已实现能力
+## Choose your starting point
 
-- GH Archive BigQuery `WatchEvent` 使用显式 UTC 日表采集，支持断点续传、原子 checkpoint、瞬时错误重试、分区与总扫描预算门禁。
-- GH Archive BigQuery `PushEvent` 使用独立显式 UTC 日表下载精简原始事件，只保留事件 ID、actor ID、repo ID、仓库名和事件时间。
-- GH Archive BigQuery `PushEvent` 跨年份聚合仓库基础目录，提供最新名称、首次/末次 Push 和事件数，并使用独立总预算门禁。
-- 只读检查既有 WatchEvent / PushEvent Raw，重新校验 Parquet footer、字段、行数和 SHA-256，并输出不含真实路径的 Catalog 快照。
-- 通过 `local_lake_partitions` 直接登记本地 WatchEvent / PushEvent 日分区，训练 run 不复制长期 Raw。
-- 面向本机 Admin Console 的受控 SQL Lab，强制只读 `githubarchive`、dry run、SQL hash 绑定、10 GiB 查询预算和 200 行 / 2 MiB 结果上限。
-- GitHub Repository REST metadata 采集，支持 ETag cache、请求上限和限流识别。
-- Starcat schema v1 匿名完整 Star 快照校验、HMAC 脱敏和导入。
-- `starcat-collection-api` Admin 导出 Pull，校验响应 checksum、字节上限、schema 和 active 快照唯一性。
-- DuckDB 流式生成 `InteractionRecord` / `RepositoryRecord` Canonical Parquet；十年事件不进入 Python 行对象列表，内存固定限制为 6 GiB、线程数为 1，排序和聚合产生的临时文件写入训练 workspace 下的 `duckdb-temp/`。
-- 最新完整快照选择、同源去重、公开仓库过滤、主体权重和时间切分。
-- train-only 主体权重、subject-repo 唯一隐式反馈和 validation/test 未来数据隔离。
-- Popular、TruncatedSVD、时间衰减 co-star 和两个 ablation 变体。
-- Dataset 使用全量主体计算仓库支持度和 Top 目录，再在主体-仓库聚合前稳定抽样；配合 co-star pair、SVD 非零项和评估主体预算，适配单机全量 Raw 扫描。
-- 单主体冷启动时明确跳过不满足数学条件的 SVD，继续交付可用的 Popular/co-star。
-- Recall@K、NDCG@K、MRR@K、Coverage 离线评估和指标发布门禁。
-- 不可变本地 Model Registry、SQLite ServingBundle、checksum/quick-check 校验和查询 CLI。
-- `RecommendAPIBundlePublisher` 使用独立发布密钥上传、激活 Bundle，并生成不含凭据的交付回执。
-- YAML 驱动的单机端到端管道，节点通过 artifact 接口可继续扩展数据源和训练器。
+| Goal | Start here | Requires |
+| --- | --- | --- |
+| Use recommendations without training | [Pretrained models and deployment](https://github.com/starcat-app/starcat-recommend-api/blob/main/docs/SELF_HOSTING.md) | Go or Docker; a model ZIP |
+| Try training without network access | [Local synthetic example](#local-example) | Python 3.12, uv |
+| Train on public data | [Training guide](docs/TRAINING.md) | GH Archive data, GitHub metadata |
+| Understand the results | [Model history](docs/MODEL_HISTORY.md) | No account or training environment |
+| Publish or automate model delivery | [Model distribution](docs/MODEL_RELEASES.md) | Maintainer credentials for your own repository |
 
-## 快速开始
+Pretrained models are assets in this repository's
+[GitHub Releases](https://github.com/starcat-app/starcat-recsys-trainer/releases), with tags
+`model-<model_version>`. If no model release has been published yet, use the local
+synthetic example or a model ZIP supplied by your deployment operator. Source-code
+ZIP downloads are not trained models.
+
+## Local example
 
 ```bash
-uv sync --all-groups
+git clone https://github.com/starcat-app/starcat-recsys-trainer.git
+cd starcat-recsys-trainer
+uv sync --locked --all-groups
+uv run starcat-recsys pipeline run --config configs/example-hybrid.yaml
+uv run starcat-recsys bundle verify workspace/registry/versions/example-hybrid-v1
+uv run starcat-recsys bundle query workspace/registry/versions/example-hybrid-v1 --repo-id 1
+```
+
+The sample data is synthetic. It needs no Starcat account, Collection service, GCP
+credentials or network requests. It exercises co-star, TF-IDF ranking fusion,
+evaluation and the serving content index. Change both `run_id` and
+`publish.model_version` before repeating a run; versions are immutable.
+
+## Data and model
+
+- [GH Archive](https://www.gharchive.org/) WatchEvent observations provide public
+  Star events. They are not a complete current-Star or Unstar snapshot.
+- Public GitHub repository metadata supplies descriptions, topics and languages.
+  PushEvent-derived metadata is an optional additional catalog source.
+- Training uses time-decayed co-star and TF-IDF content ranking; SVD and popularity
+  are available baselines. This is not a large language model.
+- A Bundle contains `recommendations.sqlite`, `manifest.json` and `checksums.json`.
+  It excludes raw events, training identities and private Starcat snapshots.
+- `pre_refit` metrics describe the evaluated candidate before the final refit.
+  Different datasets and protocols must not be treated as a continuous benchmark.
+
+See [data acquisition and provenance](docs/DATA_SOURCES.md), the
+[Bundle/version contract](docs/MODEL_FORMAT.md) and [recorded results](docs/MODEL_HISTORY.md).
+Public-data training is independent of the optional opt-in Starcat Collection connector.
+
+## Weekly operation
+
+The existing Mac schedule runs on Sunday at 11:00 Asia/Shanghai. It checks data
+integrity, at least 5,000 independent evaluation subjects, quality, coverage and an
+isolated API before deployment. Blocked and failed runs also receive public
+aggregate reports. GitHub distribution is disabled by default and can be retried
+without training or redeploying.
+
+[Weekly setup](docs/TRAINING.md#weekly-training) ·
+[Detailed operator guide / 中文](docs/每周自动训练运维指南.md)
+
+## Development
+
+```bash
 make check
-make demo
+git diff --check
 ```
 
-`make demo` 使用本地 fixture 完整执行一次管道，不访问 BigQuery 或 GitHub。查询已发布产物：
+Checks include Ruff, strict mypy and pytest coverage. The trainer uses local
+quality gates; it does not require a training CI workflow. Python CLI execution
+supports macOS/Linux; the provided launchd and caffeinate wrappers are macOS-only.
+Serving requires neither Python nor a GPU.
 
-```bash
-uv run starcat-recsys bundle verify \
-  workspace/registry/versions/example-local-v1
-
-uv run starcat-recsys bundle query \
-  workspace/registry/versions/example-local-v1 \
-  --repo-id 1 \
-  --limit 10
-```
-
-Registry 版本不可覆盖。重跑时同时修改 YAML 中的 `run_id` 和 `publish.model_version`。
-
-已下载的十年 WatchEvent 使用 `configs/example-local-lake.yaml`。该配置把 Raw、Canonical、
-训练 workspace 和 Registry 都留在 `/Volumes/T0`，并通过有界抽样完成第一版单机训练；运行前
-只需提供 `GITHUB_TOKEN`，不会再次查询 BigQuery。
-
-十年级 WatchEvent 与 PushEvent 首次采集使用两个可独立运行、独立续传的下载任务：
-
-```bash
-./scripts/download-watch-events.sh start
-./scripts/download-watch-events.sh status
-./scripts/download-watch-events.sh logs
-
-./scripts/download-push-events.sh start
-./scripts/download-push-events.sh status
-./scripts/download-push-events.sh logs
-```
-
-本机 Admin Console 使用结构化状态和固定动作接口：
-
-```bash
-./scripts/download-watch-events.sh status --json
-./scripts/download-push-events.sh status --json --skip-quota
-./scripts/download-watch-events.sh start --json
-```
-
-把现有 Raw 登记到本地数据平台前，可独立执行同一只读检查：
-
-```bash
-uv run starcat-recsys lake inspect-watch-events \
-  --workspace /Volumes/T0/Starcat/bigquery/watch-events-2016-2026
-uv run starcat-recsys lake inspect-push-events \
-  --workspace /Volumes/T0/Starcat/bigquery/push-events-2016-2026
-```
-
-命令不会移动、复制或改写 Raw；输出只包含 `lake://` / `storage://` 逻辑 URI、分区状态和
-聚合统计，不包含真实数据目录。只有重新通过 Parquet 与 checksum 校验的分区才标记为 ready。
-
-`--skip-quota` 只用于同一控制台批次的第二个状态请求；两个任务共享同一 GCP Project 月度
-额度，控制台会复用第一个状态响应中的 quota。它不关闭下载 worker 自身的后台额度保护。
-
-脚本通过 `screen + caffeinate` 在后台运行并阻止 macOS 自动休眠，不依赖 `launchd`。停止或重启使用 `stop` / `restart`。两个任务分别使用 `/Volumes/T0/Starcat/bigquery/watch-events-2016-2026` 和 `push-events-2016-2026`，不会共用 Parquet 或 checkpoint。脚本只允许在 `/Volumes/T0` 已真实挂载时启动，避免移动硬盘掉线后误写本机磁盘。每 30 分钟记录当前 GCP Project 的月度 BigQuery 计费量，达到 80% 警告、90% 停止对应下载任务；启动时额度查询失败也会拒绝运行。阈值和间隔可通过 `STARCAT_BQ_QUOTA_WARNING_PERCENT`、`STARCAT_BQ_QUOTA_STOP_PERCENT`、`STARCAT_BQ_QUOTA_LOG_INTERVAL_SECONDS` 覆盖。相同任务可安全续传，已通过 Parquet footer 和 SHA-256 校验的日期不会再次查询。
-
-首次全量完成后，使用 append 模式把下一 UTC 日连续写入同一个 Raw 与 checkpoint；它只
-校验请求日期，不会重新读取十年分区：
-
-```bash
-STARCAT_WATCH_START_DATE=2026-08-26 \
-STARCAT_WATCH_END_DATE=2026-08-26 \
-STARCAT_WATCH_APPEND_EXISTING=true \
-./scripts/download-watch-events.sh start
-```
-
-append 允许重放已覆盖日期或追加当前水位的下一天；跳日、修改预算、Location 或 `run_id`
-都会被拒绝。
-
-日常更新无需再手工计算日期。`catch-up` 会从 checkpoint 的最后完整分区开始，连续补齐到
-最新完整 UTC 日（默认 UTC 昨日），并沿用相同 Raw、预算和断点：
-
-```bash
-./scripts/download-watch-events.sh catch-up
-```
-
-临时回填到指定历史日期时设置 `STARCAT_WATCH_TARGET_DATE=YYYY-MM-DD`。目标不能包含 UTC
-当天或未来日期；checkpoint 存在日期缺口、外接盘未挂载、额度查询失败或已有下载任务运行时，
-命令会在访问 BigQuery 前拒绝执行。
-
-`start` 通过 `screen + caffeinate` 启动长期后台下载，适合首次多年回填；`catch-up` 是有明确
-退出码的前台同步命令，供每日 LaunchAgent 或上层编排等待。Star History 生产日增量不要只运行
-本仓库脚本，统一使用主仓库的
-[WatchEvent 与 Star History 每日增量运维指南](../../docs/2-产品/需求讨论/推荐算法/WatchEvent与Star-History每日增量运维指南.md)：
-
-```bash
-cd /Users/dong4j/Developer/1.AI/ai-incubator/Starcat
-supports/scripts/run-history-daily-sync.sh
-```
-
-统一入口会先补 Raw，再从生产 History 水位构建并发布相邻 Delta。Trainer 只负责 Raw 下载，
-Raw 文件存在或 checkpoint 前进都不等于 History API 已经使用新数据。
-
-## 每周自动训练
-
-每周日北京时间 11:00 使用本机 LaunchAgent 训练候选，通过数据、同输入新旧模型质量、
-覆盖与隔离 API 门槛后自动发布，失败保留旧模型；登录后可补跑漏掉的周次。
-配置、安装、状态查询及恢复见 [每周自动训练运维指南](docs/每周自动训练运维指南.md)。
-
-## 管道结构
-
-```text
-SourceConnector
-  -> WatchEvent 行为 raw + PushEvent 精简事件 raw / 仓库目录 raw
-  -> CanonicalNormalizer（DuckDB 流式扫描外部 Parquet）
-  -> GitHub API Top N 权威 metadata 覆盖
-  -> canonical Parquet
-  -> DuckDBDatasetBuilder
-  -> train / validation / test
-  -> Popular / SVD / co-star
-  -> OfflineEvaluator
-  -> ServingBundlePublisher
-  -> LocalModelRegistry
-  -> RecommendAPIBundlePublisher（可选）
-  -> starcat-recommend-api /api/v2
-```
-
-数据源、标准化、数据集、训练、评估和发布都通过稳定 Protocol 连接。当前 `LocalExecutor` 在单机编排；后续多机执行可替换 executor 和 artifact storage，不需要把 BigQuery、GitHub 或 Starcat DTO 带入训练器。
-
-## 安全边界
-
-- 不导入 Private/Internal repo、login、email、Starcat 标签、笔记、搜索和 AI/RAG 内容。
-- 本地 Starcat 文件源在 raw landing 读取后立即 HMAC 转换 `participant_id`；Collection 源只接收服务端已 HMAC 的 `subject_id`，后续产物都不保留原值。
-- GH Archive 和 Starcat 的主体标识不跨来源连接。
-- Token、GCP 凭据和 HMAC key 只通过环境提供，不写入配置或 artifact。
-- Recommend API 发布密钥只从环境变量读取，交付回执不记录密钥或服务端错误正文。
-- 在线查询只读 ServingBundle，不读取 raw、canonical 或 dataset。
-
-## 文档
-
-- [完整使用说明](docs/使用说明.md)
-- [候选训练与本地验收](docs/候选训练与本地验收.md)
-- [v17 候选训练与本地验收结果](docs/v17-候选训练与本地验收结果.md)
-- [v17 近期数据保留率审计](docs/v17-近期数据保留率审计.md)
-- [v18 事件身份修复与评估抽样方案](docs/v18-事件身份修复与评估抽样方案.md)
-- [v19 独立主体评估与 API 交付](docs/v19-独立主体评估与API交付.md)
-- [v20 仓库覆盖扩容与内容冷启动交付](docs/v20-仓库覆盖扩容与内容冷启动交付.md)
-- [WatchEvent 与 Star History 每日增量运维指南](../../docs/2-产品/需求讨论/推荐算法/WatchEvent与Star-History每日增量运维指南.md)
-- [Collection 本机 E2E 配置](configs/example-collection-local.yaml)
-- [架构设计](docs/架构设计.md)
-- [实施清单](docs/实施清单.md)
-- [BigQuery PushEvent 扩展完成结果报告](docs/BigQuery-PushEvent元数据扩展完成结果报告.md)
-- [贡献指南](CONTRIBUTING.md)
-- [安全说明](SECURITY.md)
-- [支持说明](SUPPORT.md)
-- [变更记录](CHANGELOG.md)
-
-## 开发验证
-
-```bash
-make format
-make check
-```
-
-项目按要求不包含 CI workflow，所有质量门禁在本地执行。
-
-## License
-
-[MIT License](LICENSE)
+[Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Support](SUPPORT.md) ·
+[MIT code license](LICENSE)

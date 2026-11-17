@@ -4,7 +4,7 @@
 
 ## 仓库边界
 
-- 本目录是私有推荐数据与离线训练管道的独立 Git 仓库，不提供生产 REST API；在线
+- 本目录是推荐数据与离线训练管道的独立 Git 仓库，不提供生产 REST API；在线
   查询由独立的 `starcat-recommend-api` 读取 ServingBundle。
 - 本仓库拥有独立分支、remote、提交、数据和发布边界；不得把改动并入外层 Starcat
   主仓库或顺带修改相邻 `supports/*` 项目。
@@ -18,10 +18,13 @@
 - `src/starcat_recsys/` 是管道、数据源、训练器、评估、Bundle 与 publisher 实现；
   `tests/` 是回归测试；`configs/` 是显式运行配置；`scripts/` 是 BigQuery 下载等
   运维入口；`docs/` 记录架构、使用和已完成验证。
+- 中英文 README 导向本地训练、数据来源和模型分发指南；公开成果由
+  `docs/models/history.json` 生成。周运行默认仅写 workspace 下的公开报告，
+  `public_distribution.enabled` 或 CLI `--apply` 才允许写 GitHub。
 - Raw、Canonical、workspace、Registry、checkpoint 与凭据都是运行时数据，不得提交；
   Registry 版本不可覆盖，重跑必须使用新的 `run_id` 和 `model_version`。
 - 只处理公开仓库和已脱敏主体；不同数据源的主体标识不得关联，Token、GCP 凭据、
-  HMAC key 与发布密钥只能从环境读取。
+  HMAC key 与发布密钥只能从环境或权限为 600 的私有凭据文件读取。
 
 ## 开发与验证
 

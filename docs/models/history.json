@@ -1,0 +1,729 @@
+{
+  "runs": [
+    {
+      "created_at": null,
+      "evidence": [
+        "canonical/manifest.json"
+      ],
+      "iteration": 1,
+      "metrics": {},
+      "metrics_scope": null,
+      "model_version": null,
+      "run_id": "gharchive-local-2016-2026-v1",
+      "status": "unverified",
+      "summary": "No completed serving Bundle was recovered. Missing metrics are unknown. 未找到完整 ServingBundle，缺失指标保留未知。"
+    },
+    {
+      "config_hash": "sha256:f456868f63fc977efc5520315b105c1b14ecb38311d7fd51e1db4c1307371f6d",
+      "created_at": "2026-08-27T14:15:41.344202+00:00",
+      "database_bytes": 311296,
+      "evaluated_model_checksum": null,
+      "evaluation": null,
+      "evaluation_checksum": null,
+      "evidence": [
+        "manifest.json",
+        "checksums.json",
+        "recommendations.sqlite"
+      ],
+      "git_commit": "547e50b0d5c71c26ba084c1381af40e3f0a84ce5",
+      "iteration": 1,
+      "manifest_checksum": "sha256:e3213f339ae9ee4aa61c911e2176ee832d0ad9e68019c35381b9e881305242a4",
+      "metrics": {
+        "coverage": 0.09926262053318208,
+        "evaluated_subjects": 738,
+        "mrr@20": 0.049078484388333614,
+        "ndcg@20": 0.049033370450990196,
+        "recall@20": 0.0861435199849834,
+        "skipped_subjects": 262
+      },
+      "metrics_scope": null,
+      "model_version": "gharchive-smoke-201601-v1",
+      "raw_watermark": null,
+      "recommendation_edges": 960,
+      "release_url": null,
+      "repositories": 2000,
+      "run_id": "gharchive-smoke-201601-v1",
+      "selected_model": "costar",
+      "status": "evaluated",
+      "summary": "Recovered from an immutable Bundle; local installation is not deployment evidence. 从不可变 Bundle 恢复；本地安装不代表曾上线。",
+      "training": null
+    },
+    {
+      "created_at": null,
+      "evidence": [
+        "canonical/manifest.json"
+      ],
+      "iteration": 2,
+      "metrics": {},
+      "metrics_scope": null,
+      "model_version": null,
+      "run_id": "gharchive-local-2016-2026-v2",
+      "status": "unverified",
+      "summary": "No completed serving Bundle was recovered. Missing metrics are unknown. 未找到完整 ServingBundle，缺失指标保留未知。"
+    },
+    {
+      "config_hash": "sha256:eace7401ab8d0299b44ecc5fe5d6d4524233a8b718ff906557c6039624deed3d",
+      "created_at": "2026-08-27T14:16:53.572446+00:00",
+      "database_bytes": 368640,
+      "evaluated_model_checksum": null,
+      "evaluation": null,
+      "evaluation_checksum": null,
+      "evidence": [
+        "manifest.json",
+        "checksums.json",
+        "recommendations.sqlite"
+      ],
+      "git_commit": "547e50b0d5c71c26ba084c1381af40e3f0a84ce5",
+      "iteration": 2,
+      "manifest_checksum": "sha256:af90a1b597a2372d0ef2ec3c10410404b951fe3e8d60647ae9908b6ab2d55086",
+      "metrics": {
+        "coverage": 0.11573333333333333,
+        "evaluated_subjects": 770,
+        "mrr@20": 0.05021039184904731,
+        "ndcg@20": 0.04481558565547318,
+        "recall@20": 0.07456064612079649,
+        "skipped_subjects": 230
+      },
+      "metrics_scope": null,
+      "model_version": "gharchive-smoke-201601-v2",
+      "raw_watermark": null,
+      "recommendation_edges": 1291,
+      "release_url": null,
+      "repositories": 2000,
+      "run_id": "gharchive-smoke-201601-v2",
+      "selected_model": "costar",
+      "status": "evaluated",
+      "summary": "Recovered from an immutable Bundle; local installation is not deployment evidence. 从不可变 Bundle 恢复；本地安装不代表曾上线。",
+      "training": null
+    },
+    {
+      "created_at": null,
+      "evidence": [
+        "canonical/manifest.json"
+      ],
+      "iteration": 3,
+      "metrics": {},
+      "metrics_scope": null,
+      "model_version": null,
+      "run_id": "gharchive-local-2016-2026-v3",
+      "status": "unverified",
+      "summary": "No completed serving Bundle was recovered. Missing metrics are unknown. 未找到完整 ServingBundle，缺失指标保留未知。"
+    },
+    {
+      "config_hash": "sha256:883c3fe1ba9a7cdbb590569735bf5a2626906108075ff2a96e614715e8d10445",
+      "created_at": "2026-08-27T14:18:44.162406+00:00",
+      "database_bytes": 712704,
+      "evaluated_model_checksum": null,
+      "evaluation": null,
+      "evaluation_checksum": null,
+      "evidence": [
+        "manifest.json",
+        "checksums.json",
+        "recommendations.sqlite"
+      ],
+      "git_commit": "547e50b0d5c71c26ba084c1381af40e3f0a84ce5",
+      "iteration": 3,
+      "manifest_checksum": "sha256:ee8268566a4c80fa46d83900619cea7a0d96511d5bf32f112ca1f32abbff40ca",
+      "metrics": {
+        "coverage": 0.07074148296593187,
+        "evaluated_subjects": 1919,
+        "mrr@20": 0.06167496125206781,
+        "ndcg@20": 0.03928312909183402,
+        "recall@20": 0.06009384078995894,
+        "skipped_subjects": 81
+      },
+      "metrics_scope": null,
+      "model_version": "gharchive-smoke-2016-v3",
+      "raw_watermark": null,
+      "recommendation_edges": 2219,
+      "release_url": null,
+      "repositories": 5000,
+      "run_id": "gharchive-smoke-2016-v3",
+      "selected_model": "costar",
+      "status": "evaluated",
+      "summary": "Recovered from an immutable Bundle; local installation is not deployment evidence. 从不可变 Bundle 恢复；本地安装不代表曾上线。",
+      "training": null
+    },
+    {
+      "created_at": null,
+      "evidence": [
+        "canonical/manifest.json"
+      ],
+      "iteration": 4,
+      "metrics": {},
+      "metrics_scope": null,
+      "model_version": null,
+      "run_id": "gharchive-local-2016-2026-v4",
+      "status": "unverified",
+      "summary": "No completed serving Bundle was recovered. Missing metrics are unknown. 未找到完整 ServingBundle，缺失指标保留未知。"
+    },
+    {
+      "created_at": null,
+      "evidence": [
+        "canonical/manifest.json"
+      ],
+      "iteration": 5,
+      "metrics": {},
+      "metrics_scope": null,
+      "model_version": null,
+      "run_id": "gharchive-local-2016-2026-v5",
+      "status": "unverified",
+      "summary": "No completed serving Bundle was recovered. Missing metrics are unknown. 未找到完整 ServingBundle，缺失指标保留未知。"
+    },
+    {
+      "created_at": null,
+      "evidence": [
+        "canonical/manifest.json"
+      ],
+      "iteration": 6,
+      "metrics": {},
+      "metrics_scope": null,
+      "model_version": null,
+      "run_id": "gharchive-local-2016-2026-v6",
+      "status": "unverified",
+      "summary": "No completed serving Bundle was recovered. Missing metrics are unknown. 未找到完整 ServingBundle，缺失指标保留未知。"
+    },
+    {
+      "created_at": null,
+      "evidence": [
+        "canonical/manifest.json"
+      ],
+      "iteration": 7,
+      "metrics": {},
+      "metrics_scope": null,
+      "model_version": null,
+      "run_id": "gharchive-local-2016-2026-v7",
+      "status": "unverified",
+      "summary": "No completed serving Bundle was recovered. Missing metrics are unknown. 未找到完整 ServingBundle，缺失指标保留未知。"
+    },
+    {
+      "created_at": null,
+      "evidence": [],
+      "iteration": 8,
+      "metrics": {},
+      "metrics_scope": null,
+      "model_version": null,
+      "run_id": "gharchive-local-2016-2026-v8",
+      "status": "unverified",
+      "summary": "No completed serving Bundle was recovered. Missing metrics are unknown. 未找到完整 ServingBundle，缺失指标保留未知。"
+    },
+    {
+      "created_at": null,
+      "evidence": [
+        "canonical/manifest.json"
+      ],
+      "iteration": 9,
+      "metrics": {},
+      "metrics_scope": null,
+      "model_version": null,
+      "run_id": "gharchive-local-2016-2026-v9",
+      "status": "unverified",
+      "summary": "No completed serving Bundle was recovered. Missing metrics are unknown. 未找到完整 ServingBundle，缺失指标保留未知。"
+    },
+    {
+      "created_at": null,
+      "evidence": [
+        "canonical/manifest.json"
+      ],
+      "iteration": 10,
+      "metrics": {},
+      "metrics_scope": null,
+      "model_version": null,
+      "run_id": "gharchive-local-2016-2026-v10",
+      "status": "unverified",
+      "summary": "No completed serving Bundle was recovered. Missing metrics are unknown. 未找到完整 ServingBundle，缺失指标保留未知。"
+    },
+    {
+      "created_at": null,
+      "evidence": [],
+      "iteration": 11,
+      "metrics": {},
+      "metrics_scope": null,
+      "model_version": null,
+      "run_id": "gharchive-local-2016-2026-v11",
+      "status": "unverified",
+      "summary": "No completed serving Bundle was recovered. Missing metrics are unknown. 未找到完整 ServingBundle，缺失指标保留未知。"
+    },
+    {
+      "created_at": "2026-08-28T03:24:03.121528+00:00",
+      "evidence": [
+        "manifest.json (Bundle validation failed)"
+      ],
+      "iteration": 12,
+      "metrics": {
+        "coverage": 0.19956663055254606,
+        "evaluated_subjects": 9536,
+        "mrr@20": 0.02451401643857282,
+        "ndcg@20": 0.025841390836662297,
+        "recall@20": 0.0550445000067207,
+        "skipped_subjects": 182
+      },
+      "metrics_scope": null,
+      "model_version": "gharchive-local-2016-2026-v12",
+      "run_id": "gharchive-local-2016-2026-v12",
+      "selected_model": "costar",
+      "status": "unverified",
+      "summary": "Historical Bundle validation failed; metrics are unverified manifest records. 历史 Bundle 校验失败，指标仅为未核实的 manifest 记录，不可直接分发。"
+    },
+    {
+      "config_hash": "sha256:b53d8b3df8674ef06b8ae1fa5111f17a15ac2ccc91e9efcde692129561d82184",
+      "created_at": "2026-08-28T12:18:46.659641+00:00",
+      "database_bytes": 5357568,
+      "evaluated_model_checksum": null,
+      "evaluation": null,
+      "evaluation_checksum": null,
+      "evidence": [
+        "manifest.json",
+        "checksums.json",
+        "recommendations.sqlite"
+      ],
+      "git_commit": "7b7629b534c2a34d264c3b658388009a8eab7cde",
+      "iteration": 13,
+      "manifest_checksum": "sha256:1a4d29ff4f4e4efec149ba009da84bea13d7a81808177feefa021eb0b5460076",
+      "metrics": {
+        "coverage": 0.19956663055254606,
+        "evaluated_subjects": 9536,
+        "mrr@20": 0.02451401643857282,
+        "ndcg@20": 0.025841390836662297,
+        "recall@20": 0.0550445000067207,
+        "skipped_subjects": 182
+      },
+      "metrics_scope": null,
+      "model_version": "gharchive-local-2016-2026-v13",
+      "raw_watermark": null,
+      "recommendation_edges": 22530,
+      "release_url": null,
+      "repositories": 4619,
+      "run_id": "gharchive-local-2016-2026-v13",
+      "selected_model": "costar",
+      "status": "evaluated",
+      "summary": "Recovered from an immutable Bundle; local installation is not deployment evidence. 从不可变 Bundle 恢复；本地安装不代表曾上线。",
+      "training": null
+    },
+    {
+      "config_hash": "sha256:fc128b66b213b68cb63b5acf1d9a066eb3a9d22d294629a1f2a639c835081b25",
+      "created_at": "2026-11-02T02:25:26.089200+00:00",
+      "database_bytes": 4198400,
+      "evaluated_model_checksum": null,
+      "evaluation": null,
+      "evaluation_checksum": null,
+      "evidence": [
+        "manifest.json",
+        "checksums.json",
+        "recommendations.sqlite"
+      ],
+      "git_commit": "f651e9bac97707e084ae3e1a1d30ce7d4a0a89a1",
+      "iteration": 14,
+      "manifest_checksum": "sha256:a312b7b4015140403fcb7901f75e0c5c33d4bbc719ee3292ca0b74ecc35f2eb0",
+      "metrics": {
+        "coverage": 0.13346354166666666,
+        "evaluated_subjects": 1347,
+        "mrr@20": 0.014133443170277692,
+        "ndcg@20": 0.022523166068385628,
+        "recall@20": 0.05567398451585534,
+        "skipped_subjects": 17
+      },
+      "metrics_scope": null,
+      "model_version": "gharchive-local-2016-20261031-v14",
+      "raw_watermark": null,
+      "recommendation_edges": 15870,
+      "release_url": null,
+      "repositories": 4611,
+      "run_id": "gharchive-local-2016-20261031-v14",
+      "selected_model": "costar",
+      "status": "evaluated",
+      "summary": "Recovered from an immutable Bundle; local installation is not deployment evidence. 从不可变 Bundle 恢复；本地安装不代表曾上线。",
+      "training": null
+    },
+    {
+      "config_hash": "sha256:3b93f63a0da9f32297006f9982d680f59c9bcdce088383b988de5b54067053c1",
+      "created_at": "2026-11-02T02:41:19.148210+00:00",
+      "database_bytes": 5349376,
+      "evaluated_model_checksum": null,
+      "evaluation": null,
+      "evaluation_checksum": null,
+      "evidence": [
+        "manifest.json",
+        "checksums.json",
+        "recommendations.sqlite"
+      ],
+      "git_commit": "f651e9bac97707e084ae3e1a1d30ce7d4a0a89a1",
+      "iteration": 15,
+      "manifest_checksum": "sha256:1c729abe48273830ac8be6eff4253a25896762dd792de9bd2b303283ca75a4ac",
+      "metrics": {
+        "coverage": 0.19878075332026998,
+        "evaluated_subjects": 9532,
+        "mrr@20": 0.024404948716831517,
+        "ndcg@20": 0.025843263098556574,
+        "recall@20": 0.05513557870851581,
+        "skipped_subjects": 189
+      },
+      "metrics_scope": null,
+      "model_version": "gharchive-local-2016-20261031-v15-fixed-split",
+      "raw_watermark": null,
+      "recommendation_edges": 22502,
+      "release_url": null,
+      "repositories": 4597,
+      "run_id": "gharchive-local-2016-20261031-v15-fixed-split",
+      "selected_model": "costar",
+      "status": "evaluated",
+      "summary": "Recovered from an immutable Bundle; local installation is not deployment evidence. 从不可变 Bundle 恢复；本地安装不代表曾上线。",
+      "training": null
+    },
+    {
+      "config_hash": "sha256:de67089038cd956be3843eda8b0af49ddf80629a5c98140c9f9b15334b6a5097",
+      "created_at": "2026-11-02T06:11:01.470035+00:00",
+      "database_bytes": 6660096,
+      "evaluated_model_checksum": null,
+      "evaluation": null,
+      "evaluation_checksum": null,
+      "evidence": [
+        "manifest.json",
+        "checksums.json",
+        "recommendations.sqlite"
+      ],
+      "git_commit": "f651e9bac97707e084ae3e1a1d30ce7d4a0a89a1",
+      "iteration": 16,
+      "manifest_checksum": "sha256:050cc5db09a38003be016afbffbd2acb6c2c259e198b69342f58ced280520fc7",
+      "metrics": {
+        "coverage": 0.06749778695780466,
+        "evaluated_subjects": 9781,
+        "mrr@20": 0.019221801641870817,
+        "ndcg@20": 0.01882013985896244,
+        "recall@20": 0.038145005720919715,
+        "skipped_subjects": 219
+      },
+      "metrics_scope": null,
+      "model_version": "gharchive-local-2016-20261031-v16-15k",
+      "raw_watermark": null,
+      "recommendation_edges": 15414,
+      "release_url": null,
+      "repositories": 13563,
+      "run_id": "gharchive-local-2016-20261031-v16-15k",
+      "selected_model": "costar",
+      "status": "evaluated",
+      "summary": "Recovered from an immutable Bundle; local installation is not deployment evidence. 从不可变 Bundle 恢复；本地安装不代表曾上线。",
+      "training": null
+    },
+    {
+      "created_at": null,
+      "data_processing": {
+        "candidate_repository_count": 13638,
+        "final_rows": 2061640,
+        "input_interaction_rows": 511284530,
+        "public_repository_count": 13638,
+        "split_counts": {
+          "test": 291,
+          "train": 2059869,
+          "validation": 1480
+        },
+        "training_eligible_subject_count": 59934
+      },
+      "decision": {
+        "candidate": {
+          "coverage": 0.03228646903434106,
+          "evaluated_subjects": 274,
+          "mrr@20": 0.001694473409801877,
+          "ndcg@20": 0.004453361721586155,
+          "recall@20": 0.014598540145985401,
+          "skipped_subjects": 0
+        },
+        "incumbent": {
+          "coverage": 0.025242148517757558,
+          "evaluated_subjects": 274,
+          "mrr@20": 0.0018242250450279647,
+          "ndcg@20": 0.005882304614524603,
+          "recall@20": 0.021897810218978103,
+          "skipped_subjects": 0
+        },
+        "passed": false
+      },
+      "evaluation": {
+        "dataset_checksum": "sha256:48d46b9320d6bf8aa2d5be980f7298ab23b776d29cf98c77d16f3d4b2e34d204",
+        "k": 20,
+        "split": "test"
+      },
+      "evidence": [
+        "dataset/quality-report.json",
+        "v17 controls decision.json"
+      ],
+      "iteration": 17,
+      "metrics": {
+        "coverage": 0.03228646903434106,
+        "evaluated_subjects": 274,
+        "mrr@20": 0.001694473409801877,
+        "ndcg@20": 0.004453361721586155,
+        "recall@20": 0.014598540145985401,
+        "skipped_subjects": 0
+      },
+      "metrics_scope": "same_model",
+      "model_version": null,
+      "run_id": "gharchive-20261031-v17-recent",
+      "selected_model": "costar",
+      "status": "blocked",
+      "summary": "The v17 recent holdout gate failed; final refit was stopped. v17 近期留出未通过，停止最终 refit；详见 v17 结果报告。"
+    },
+    {
+      "created_at": null,
+      "data_processing": {
+        "candidate_repository_count": 13638,
+        "final_rows": 2061840,
+        "input_interaction_rows": 511284530,
+        "public_repository_count": 13638,
+        "split_counts": {
+          "test": 291,
+          "train": 2060069,
+          "validation": 1480
+        },
+        "training_eligible_subject_count": 59940
+      },
+      "evidence": [
+        "dataset/quality-report.json"
+      ],
+      "iteration": 18,
+      "metrics": {},
+      "metrics_scope": null,
+      "model_version": null,
+      "run_id": "gharchive-20261031-v18-event-identity",
+      "status": "data_only",
+      "summary": "Event identity repair and dataset rebuild only; no new quality claim. 事件身份修复与 Dataset 重建，不代表推荐质量提升。"
+    },
+    {
+      "config_hash": "sha256:f20afb38f89f8333225e67057ad5798b1d06c4871d1e420e133a62de6fa313fd",
+      "created_at": "2026-11-02T17:55:29.377409+00:00",
+      "database_bytes": 229793792,
+      "evaluated_model_checksum": "sha256:bfaf1c772483b53b76c574bd9624e323d7149d17e2dcad014053d19717aa6e80",
+      "evaluation": null,
+      "evaluation_checksum": "sha256:b95d37f81448600ccaf1381f36ad25ccbf52bb4a6a37d160c69eea9b9baf41c2",
+      "evidence": [
+        "manifest.json",
+        "checksums.json",
+        "recommendations.sqlite"
+      ],
+      "git_commit": "working-tree-source-checksums-in-run-manifest",
+      "iteration": 19,
+      "manifest_checksum": "sha256:b58342b57a948393580b48f2c9a16158e3018c7729d685e44d026fc00cd952c9",
+      "metrics": {
+        "catalog_recall": 0.041144184503069524,
+        "catalog_truth_count": 7942,
+        "coverage": 0.1613589668329909,
+        "empty_result_rate": 0.0,
+        "evaluated_subjects": 8395,
+        "mrr@20": 0.00838934770716828,
+        "ndcg@20": 0.013851370702961559,
+        "recall@20": 0.03508551008253212,
+        "skipped_subjects": 0,
+        "truth_catalog_coverage": 0.8626982402780795,
+        "truth_count": 9206
+      },
+      "metrics_scope": "same_model",
+      "model_version": "gharchive-20261031-v19-evaluated",
+      "raw_watermark": null,
+      "recommendation_edges": 1350715,
+      "release_url": null,
+      "repositories": 13638,
+      "run_id": "gharchive-20261031-v19-evaluated",
+      "selected_model": "hybrid_25",
+      "status": "evaluated",
+      "summary": "Recovered from an immutable Bundle; local installation is not deployment evidence. 从不可变 Bundle 恢复；本地安装不代表曾上线。",
+      "training": null
+    },
+    {
+      "config_hash": "sha256:fc4df9d926cdb740a53f72fc61ba4381bce6010ab3fa8bc39966e55439ec0176",
+      "created_at": "2026-11-02T23:23:09.351855+00:00",
+      "database_bytes": 239292416,
+      "evaluated_model_checksum": "sha256:bfaf1c772483b53b76c574bd9624e323d7149d17e2dcad014053d19717aa6e80",
+      "evaluation": null,
+      "evaluation_checksum": "sha256:b95d37f81448600ccaf1381f36ad25ccbf52bb4a6a37d160c69eea9b9baf41c2",
+      "evidence": [
+        "manifest.json",
+        "checksums.json",
+        "recommendations.sqlite"
+      ],
+      "git_commit": "working-tree-checksums-in-training-start",
+      "iteration": 20,
+      "manifest_checksum": "sha256:8d9d9dfeca60a165d093dcd9414c342a3a544e34cfe82b013a0bcc46b28d34c0",
+      "metrics": {
+        "catalog_recall": 0.041144184503069524,
+        "catalog_truth_count": 7942,
+        "coverage": 0.1613589668329909,
+        "empty_result_rate": 0.0,
+        "evaluated_subjects": 8395,
+        "mrr@20": 0.00838934770716828,
+        "ndcg@20": 0.013851370702961559,
+        "recall@20": 0.03508551008253212,
+        "skipped_subjects": 0,
+        "truth_catalog_coverage": 0.8626982402780795,
+        "truth_count": 9206
+      },
+      "metrics_scope": "pre_refit",
+      "model_version": "gharchive-20261031-v20-coverage",
+      "raw_watermark": null,
+      "recommendation_edges": 1350586,
+      "release_url": null,
+      "repositories": 18839,
+      "run_id": "gharchive-20261031-v20-coverage",
+      "selected_model": "hybrid_25",
+      "status": "evaluated",
+      "summary": "Coverage expansion and content fallback; metrics are inherited from v19 before refit, not a new quality measurement. 扩容与内容补充；继承 v19 重训前指标，不代表新增效果实测。",
+      "training": null
+    },
+    {
+      "completed_at": "2026-11-10T16:12:10.628407+00:00",
+      "config_hash": "54470f7e4f96205a22f202cc172599f710bb0ffa08f52245c6deee55e8131318",
+      "created_at": "2026-11-10T16:11:47.756192+00:00",
+      "database_bytes": 239210496,
+      "decision": {
+        "candidate": {
+          "catalog_recall": 0.04533745492014425,
+          "catalog_truth_count": 2697,
+          "coverage": 0.14969181097739948,
+          "empty_result_rate": 0.0,
+          "evaluated_subjects": 3663,
+          "mrr@20": 0.007044700791768997,
+          "ndcg@20": 0.01232948092738516,
+          "recall@20": 0.031895531895531896,
+          "skipped_subjects": 0,
+          "truth_catalog_coverage": 0.711046664909043,
+          "truth_count": 3793
+        },
+        "checks": {
+          "empty_rate_at_most_10_percent": true,
+          "empty_rate_not_higher": true,
+          "finite_metrics": true,
+          "minimum_5000_subjects": false,
+          "ndcg_not_lower": true,
+          "recall_not_lower": true,
+          "same_population": true
+        },
+        "incumbent": {
+          "catalog_recall": 0.044951056156620296,
+          "catalog_truth_count": 2697,
+          "coverage": 0.14939829762254184,
+          "empty_result_rate": 0.0,
+          "evaluated_subjects": 3663,
+          "mrr@20": 0.007028920022634254,
+          "ndcg@20": 0.01227845487868481,
+          "recall@20": 0.03162253162253162,
+          "skipped_subjects": 0,
+          "truth_catalog_coverage": 0.711046664909043,
+          "truth_count": 3793
+        },
+        "passed": false
+      },
+      "evaluated_model_checksum": "sha256:fa599a85d72f91df13cffca0bf73dc766cea80ebb7adc4ddc94e936f57b3dcef",
+      "evaluation": null,
+      "evaluation_checksum": "sha256:4eedb18b38cc5417eb0c42771ead8175e2b3793cf22806ea0714038872aee746",
+      "evidence": [
+        "run.json",
+        "verified stage artifacts"
+      ],
+      "git_commit": "unknown",
+      "manifest_checksum": "sha256:1f625f073253eb9dddae1ec63ef22b0952671ef83849d87d8b4ccfd2496a021c",
+      "metrics": {
+        "catalog_recall": 0.04533745492014425,
+        "catalog_truth_count": 2697,
+        "coverage": 0.14969181097739948,
+        "empty_result_rate": 0.0,
+        "evaluated_subjects": 3663,
+        "mrr@20": 0.007044700791768997,
+        "ndcg@20": 0.01232948092738516,
+        "recall@20": 0.031895531895531896,
+        "skipped_subjects": 0,
+        "truth_catalog_coverage": 0.711046664909043,
+        "truth_count": 3793
+      },
+      "metrics_scope": "same_model",
+      "model_version": "weekly-20261109-20261110T155923444985-evaluated",
+      "raw_watermark": "2026-11-09",
+      "recommendation_edges": 1350583,
+      "release_url": null,
+      "repositories": 18839,
+      "run_id": "weekly-20261109-20261110T155923444985",
+      "selected_model": "hybrid_25",
+      "started_at": null,
+      "status": "blocked",
+      "summary": null,
+      "training": null
+    },
+    {
+      "completed_at": "2026-11-15T03:18:06.032753+00:00",
+      "config_hash": "54470f7e4f96205a22f202cc172599f710bb0ffa08f52245c6deee55e8131318",
+      "created_at": "2026-11-15T03:15:43.695087+00:00",
+      "database_bytes": 239235072,
+      "decision": {
+        "candidate": {
+          "catalog_recall": 0.04514536041417762,
+          "catalog_truth_count": 4373,
+          "coverage": 0.18131787496331084,
+          "empty_result_rate": 0.0,
+          "evaluated_subjects": 5840,
+          "mrr@20": 0.00738075921776858,
+          "ndcg@20": 0.012685233144540644,
+          "recall@20": 0.032263127853881274,
+          "skipped_subjects": 0,
+          "truth_catalog_coverage": 0.7175910731867411,
+          "truth_count": 6094
+        },
+        "checks": {
+          "empty_rate_at_most_10_percent": true,
+          "empty_rate_not_higher": true,
+          "finite_metrics": true,
+          "minimum_5000_subjects": true,
+          "ndcg_not_lower": true,
+          "recall_not_lower": true,
+          "same_population": true
+        },
+        "incumbent": {
+          "catalog_recall": 0.04490641178813222,
+          "catalog_truth_count": 4373,
+          "coverage": 0.18087760493102437,
+          "empty_result_rate": 0.0,
+          "evaluated_subjects": 5840,
+          "mrr@20": 0.0073571284086864685,
+          "ndcg@20": 0.012639927265140238,
+          "recall@20": 0.032091894977168946,
+          "skipped_subjects": 0,
+          "truth_catalog_coverage": 0.7175910731867411,
+          "truth_count": 6094
+        },
+        "passed": true
+      },
+      "evaluated_model_checksum": "sha256:fa599a85d72f91df13cffca0bf73dc766cea80ebb7adc4ddc94e936f57b3dcef",
+      "evaluation": null,
+      "evaluation_checksum": "sha256:5fda8698c772a637e42a8c07935ac95183c032f16593e79a6df120bb6645fd72",
+      "evidence": [
+        "run.json",
+        "verified stage artifacts"
+      ],
+      "git_commit": "unknown",
+      "manifest_checksum": "sha256:2b99bfe3e2afb58c058f51485b0bad92ca475f366621917cec71cf56e31b329b",
+      "metrics": {
+        "catalog_recall": 0.04514536041417762,
+        "catalog_truth_count": 4373,
+        "coverage": 0.18131787496331084,
+        "empty_result_rate": 0.0,
+        "evaluated_subjects": 5840,
+        "mrr@20": 0.00738075921776858,
+        "ndcg@20": 0.012685233144540644,
+        "recall@20": 0.032263127853881274,
+        "skipped_subjects": 0,
+        "truth_catalog_coverage": 0.7175910731867411,
+        "truth_count": 6094
+      },
+      "metrics_scope": "pre_refit",
+      "model_version": "weekly-20261114-20261115T030011586965-hybrid",
+      "raw_watermark": "2026-11-14",
+      "recommendation_edges": 1350558,
+      "release_url": null,
+      "repositories": 18839,
+      "run_id": "weekly-20261114-20261115T030011586965",
+      "selected_model": "hybrid_25",
+      "started_at": null,
+      "status": "published",
+      "summary": null,
+      "training": null
+    }
+  ],
+  "schema_version": 1
+}
