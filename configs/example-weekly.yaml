@@ -13,3 +13,12 @@ api_root: /local/starcat-recommend-api
 base_url: https://starcat-api.fly.dev
 publish_key_file: /local/private/recommend-publish.key
 query_key_file: /local/private/recommend-query.key
+
+# 默认只生成本地公开报告；开源与发布权限确认后再启用 GitHub 写入。
+public_distribution:
+  enabled: false
+  repository: starcat-app/starcat-recsys-trainer
+  branch: main
+  token_env: STARCAT_MODELS_GITHUB_TOKEN
+  # launchd 不继承 shell export 时，可改用权限为 600 的私有 Token 文件。
+  # token_file: /local/private/models-github.key

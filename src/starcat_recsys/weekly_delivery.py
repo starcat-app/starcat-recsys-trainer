@@ -55,19 +55,8 @@ def local_acceptance(context: TaskContext, api_root: Path, bundle: Path) -> dict
         if not any(word in key.upper() for word in ["TOKEN", "SECRET", "KEY"])
     }
     environment["STARCAT_TEST_CANDIDATE_BUNDLE"] = str(bundle)
-    # API 当前已使用本地 Kit 的 Disabled 字段，而独立 go.mod 仍指向旧 Kit 版本。
-    # 在本阶段私有目录建立显式 workspace，复现既有联合验收方式；不修改各仓库依赖文件。
-    kit_root = api_root.parent / "starcat-api-kit"
-    version = next(
-        line.split()[1]
-        for line in (api_root / "go.mod").read_text().splitlines()
-        if line.startswith("go ")
-    )
-    workspace = context.workspace / "go.work"
-    workspace.write_text(
-        f"go {version}\n\nuse (\n{json.dumps(str(api_root))}\n{json.dumps(str(kit_root))}\n)\n"
-    )
-    environment["GOWORK"] = str(workspace)
+    # 固定模块依赖已包含所需 Kit 能力；独立 checkout 必须可验收，不能借兄弟工作区过关。
+    environment["GOWORK"] = "off"
     result = subprocess.run(
         [
             "go",

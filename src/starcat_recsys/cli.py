@@ -24,12 +24,21 @@ from starcat_recsys.bigquery_quota import (
     read_bigquery_quota,
 )
 from starcat_recsys.bundle import LocalModelRegistry, query_bundle, verify_bundle
+from starcat_recsys.history_backfill import backfill_history
 from starcat_recsys.interfaces import TaskContext
 from starcat_recsys.lake_catalog import inspect_bigquery_dataset
+from starcat_recsys.model_history import bundle_record, record_result, render_history
+from starcat_recsys.model_release import (
+    GitHubDistribution,
+    prepare_release,
+    read_release_package,
+)
 from starcat_recsys.pipeline import run_pipeline
 from starcat_recsys.sources.bigquery import BigQueryConfig, BigQueryWatchEventSource
 from starcat_recsys.sources.bigquery_push import BigQueryPushEventSource
 from starcat_recsys.watch_catchup import plan_watch_catch_up
+from starcat_recsys.weekly_init import initialize_weekly
+from starcat_recsys.weekly_reporting import github_client
 
 
 def _add_daily_download_arguments(parser: argparse.ArgumentParser) -> None:
@@ -134,6 +143,44 @@ def build_parser() -> argparse.ArgumentParser:
     activate = registry_commands.add_parser("activate", help="回滚或切换激活版本")
     activate.add_argument("path", type=Path)
     activate.add_argument("version")
+
+    history = commands.add_parser("history", help="维护公开训练成果")
+    history_commands = history.add_subparsers(dest="history_command", required=True)
+    history_record = history_commands.add_parser("record", help="从 Bundle 归档聚合成果")
+    history_record.add_argument("--bundle", type=Path, required=True)
+    history_record.add_argument("--catalog", type=Path, required=True)
+    history_render = history_commands.add_parser("render", help="从索引生成历史页和模型说明")
+    history_render.add_argument("--catalog", type=Path, required=True)
+    history_render.add_argument("--output", type=Path, required=True)
+    history_backfill = history_commands.add_parser("backfill", help="只读历史元数据并回补公开档案")
+    history_backfill.add_argument("--root", type=Path, required=True)
+    history_backfill.add_argument("--catalog", type=Path, required=True)
+    history_backfill.add_argument("--output", type=Path, required=True)
+    history_sync = history_commands.add_parser("sync", help="同步生成文档到 GitHub")
+    history_sync.add_argument("--catalog", type=Path, required=True)
+    history_sync.add_argument("--repository", required=True)
+    history_sync.add_argument("--branch", default="main")
+    history_sync.add_argument("--apply", action="store_true")
+    history_sync.add_argument("--token-env", default="STARCAT_MODELS_GITHUB_TOKEN")
+
+    release = commands.add_parser("release", help="准备或分发预训练模型")
+    release_commands = release.add_subparsers(dest="release_command", required=True)
+    release_prepare = release_commands.add_parser("prepare", help="仅生成本地发布资产")
+    release_prepare.add_argument("--bundle", type=Path, required=True)
+    release_prepare.add_argument("--output", type=Path, required=True)
+    release_publish = release_commands.add_parser("publish", help="发布校验后的模型资产")
+    release_publish.add_argument("--package", type=Path, required=True)
+    release_publish.add_argument("--repository", required=True)
+    release_publish.add_argument("--target", default="main")
+    release_publish.add_argument("--apply", action="store_true")
+    release_publish.add_argument("--token-env", default="STARCAT_MODELS_GITHUB_TOKEN")
+
+    weekly_init = commands.add_parser("weekly-init", help="由首次训练结果生成私有周任务配置")
+    weekly_init.add_argument("--run", type=Path, required=True)
+    weekly_init.add_argument("--raw-root", type=Path, required=True)
+    weekly_init.add_argument("--watermark", type=date.fromisoformat, required=True)
+    weekly_init.add_argument("--output", type=Path, required=True)
+    weekly_init.add_argument("--api-root", type=Path, required=True)
     return parser
 
 
@@ -179,6 +226,66 @@ def main(argv: list[str] | None = None) -> int:
     elif arguments.command == "registry" and arguments.registry_command == "activate":
         LocalModelRegistry(arguments.path).activate(arguments.version)
         print(json.dumps({"active": arguments.version}, ensure_ascii=False))
+    elif arguments.command == "history":
+        if arguments.history_command == "record":
+            record_result(arguments.catalog, bundle_record(arguments.bundle))
+            print(json.dumps({"status": "recorded"}))
+        elif arguments.history_command == "render":
+            files = render_history(arguments.catalog, arguments.output)
+            print(json.dumps({"status": "rendered", "files": len(files)}))
+        elif arguments.history_command == "backfill":
+            count = backfill_history(arguments.root, arguments.catalog, arguments.output)
+            print(json.dumps({"status": "backfilled", "records": count}))
+        elif not arguments.apply:
+            print(
+                json.dumps(
+                    {
+                        "status": "preview",
+                        "repository": arguments.repository,
+                        "branch": arguments.branch,
+                    }
+                )
+            )
+        else:
+            with github_client(arguments.token_env) as client:
+                commit = GitHubDistribution(arguments.repository, client).sync_history(
+                    arguments.catalog,
+                    branch=arguments.branch,
+                )
+            print(json.dumps({"status": "published", "commit": commit}))
+    elif arguments.command == "release":
+        if arguments.release_command == "prepare":
+            prepare_release(arguments.bundle, arguments.output)
+            print(json.dumps({"status": "prepared"}))
+        elif not arguments.apply:
+            package = read_release_package(arguments.package)
+            print(
+                json.dumps(
+                    {
+                        "status": "preview",
+                        "repository": arguments.repository,
+                        "target": arguments.target,
+                        "tag": package["tag"],
+                        "assets": package["assets"],
+                    }
+                )
+            )
+        else:
+            with github_client(arguments.token_env) as client:
+                url = GitHubDistribution(arguments.repository, client).publish(
+                    arguments.package,
+                    target=arguments.target,
+                )
+            print(json.dumps({"status": "published", "release_url": url}))
+    elif arguments.command == "weekly-init":
+        initialize_weekly(
+            arguments.run,
+            arguments.raw_root,
+            arguments.watermark,
+            arguments.output,
+            arguments.api_root,
+        )
+        print(json.dumps({"status": "configured", "scheduler_installed": False}))
     elif arguments.command == "bigquery" and arguments.bigquery_command in {
         "download-watch-events",
         "download-push-events",

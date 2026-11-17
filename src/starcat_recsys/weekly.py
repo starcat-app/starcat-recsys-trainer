@@ -36,6 +36,7 @@ from starcat_recsys.weekly_delivery import (
     publish_with_rollback,
     read_key,
 )
+from starcat_recsys.weekly_reporting import finish_publication
 from starcat_recsys.weekly_training import (
     build_bundle,
     check_coverage,
@@ -110,6 +111,7 @@ class WeeklyRun:
                 "steps": {},
                 "incumbent_bundle": incumbent,
                 "status": "running",
+                "started_at": datetime.now(UTC).isoformat(),
             }
             self.record["input_checksums"] = {
                 key: sha256_file(Path(config[key]))
@@ -368,16 +370,22 @@ def run(config: dict[str, Any], *, scheduled: bool = False) -> dict[str, Any]:
                 details["reason"] = str(error)
             task.save("failed", **details)
             raise
+        finally:
+            if task.record["status"] in {"published", "blocked", "failed"}:
+                finish_publication(config, state, state_file)
 
 
 def main() -> int:
     """命令行仅提供正常运行和状态读取，没有绕过门槛的发布开关。"""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["run", "status"])
+    parser.add_argument("command", choices=["run", "status", "sync-publication"])
     parser.add_argument(
         "--config", type=Path, default=Path.home() / ".config/starcat/weekly-recommendation.yaml"
     )
     parser.add_argument("--scheduled", action="store_true")
+    parser.add_argument(
+        "--apply", action="store_true", help="显式允许 sync-publication 写入 GitHub"
+    )
     args = parser.parse_args()
     try:
         config = yaml.safe_load(args.config.read_text())
@@ -403,13 +411,24 @@ def main() -> int:
                     "updated_at",
                     "published_watermark",
                     "published_version",
+                    "distribution",
                 ]
                 if key in state
             }
+        elif args.command == "sync-publication":
+            state_file = Path(config["state_file"])
+            with state_file.with_suffix(".lock").open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                result = finish_publication(
+                    config,
+                    _read_json(state_file),
+                    state_file,
+                    apply=args.apply,
+                )
         else:
             result = run(config, scheduled=args.scheduled)
         print(json.dumps(result, ensure_ascii=False), flush=True)
-        return 0
+        return 1 if result.get("status") == "pending" else 0
     except Exception as error:
         failure = {"status": "failed", "error_type": type(error).__name__}
         if isinstance(error, RawValidationError):
