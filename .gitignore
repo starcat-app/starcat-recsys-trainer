@@ -13,4 +13,5 @@ build/
 dist/
 tmp/
 workspace/
+configs/*.local
 *.log

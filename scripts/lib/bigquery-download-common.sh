@@ -4,7 +4,12 @@
 
 readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 readonly SCRIPT_PATH="$SCRIPT_DIR/$(basename "${BASH_SOURCE[1]}")"
-readonly BILLING_PROJECT="${STARCAT_BQ_BILLING_PROJECT:-glassy-landing-454512-p9}"
+# 项目归属是操作者配置，不随开源代码分发；本机文件只读纯文本，不执行 shell。
+local_billing_project=""
+if [[ -f "$REPO_ROOT/configs/billing-project.local" ]]; then
+  IFS= read -r local_billing_project <"$REPO_ROOT/configs/billing-project.local" || true
+fi
+readonly BILLING_PROJECT="${STARCAT_BQ_BILLING_PROJECT:-$local_billing_project}"
 readonly LOCATION="${STARCAT_BQ_LOCATION:-US}"
 readonly QUOTA_WARNING_PERCENT="${STARCAT_BQ_QUOTA_WARNING_PERCENT:-80}"
 readonly QUOTA_STOP_PERCENT="${STARCAT_BQ_QUOTA_STOP_PERCENT:-90}"
@@ -132,6 +137,10 @@ require_external_mount() {
 }
 
 require_runtime() {
+  if [[ -z "$BILLING_PROJECT" ]]; then
+    echo "错误：请设置 STARCAT_BQ_BILLING_PROJECT 或 configs/billing-project.local。" >&2
+    exit 1
+  fi
   if [[ ! -x "$CLI" ]]; then
     echo "错误：未找到 $CLI，请先在项目根目录执行 uv sync --all-groups。" >&2
     exit 1
