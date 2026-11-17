@@ -8,7 +8,12 @@ readonly EVENT_LABEL="PushEvent"
 readonly COMMAND_NAME="download-push-events"
 readonly REPAIR_COMMAND_NAME="repair-push-events-checkpoint"
 readonly SESSION_NAME="${STARCAT_PUSH_SESSION_NAME:-starcat-push-events}"
-readonly VOLUME_ROOT="${STARCAT_PUSH_VOLUME_ROOT:-/Volumes/T0}"
+# 维护者磁盘位置只保存在被 Git 忽略的纯文本配置中；环境变量优先。
+local_volume_root=""
+if [[ -f "$SCRIPT_DIR/../configs/data-volume.local" ]]; then
+  IFS= read -r local_volume_root <"$SCRIPT_DIR/../configs/data-volume.local" || true
+fi
+readonly VOLUME_ROOT="${STARCAT_PUSH_VOLUME_ROOT:-${local_volume_root:-/Volumes/StarcatData}}"
 readonly WORKSPACE="${STARCAT_PUSH_WORKSPACE:-$VOLUME_ROOT/Starcat/bigquery/push-events-2016-2026}"
 readonly LOG_FILE="${STARCAT_PUSH_LOG_FILE:-$VOLUME_ROOT/Starcat/bigquery/push-events-2016-2026.log}"
 readonly START_DATE="${STARCAT_PUSH_START_DATE:-2016-01-01}"

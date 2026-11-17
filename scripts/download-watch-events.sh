@@ -7,7 +7,12 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly EVENT_LABEL="WatchEvent"
 readonly COMMAND_NAME="download-watch-events"
 readonly SESSION_NAME="${STARCAT_WATCH_SESSION_NAME:-starcat-watch-events}"
-readonly VOLUME_ROOT="${STARCAT_WATCH_VOLUME_ROOT:-/Volumes/T0}"
+# 维护者磁盘位置只保存在被 Git 忽略的纯文本配置中；环境变量优先。
+local_volume_root=""
+if [[ -f "$SCRIPT_DIR/../configs/data-volume.local" ]]; then
+  IFS= read -r local_volume_root <"$SCRIPT_DIR/../configs/data-volume.local" || true
+fi
+readonly VOLUME_ROOT="${STARCAT_WATCH_VOLUME_ROOT:-${local_volume_root:-/Volumes/StarcatData}}"
 readonly WORKSPACE="${STARCAT_WATCH_WORKSPACE:-$VOLUME_ROOT/Starcat/bigquery/watch-events-2016-2026}"
 readonly LOG_FILE="${STARCAT_WATCH_LOG_FILE:-$VOLUME_ROOT/Starcat/bigquery/watch-events-2016-2026.log}"
 readonly START_DATE="${STARCAT_WATCH_START_DATE:-2016-01-01}"

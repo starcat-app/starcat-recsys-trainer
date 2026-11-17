@@ -1,18 +1,18 @@
 # 使用真实本地 Raw 的无网络烟测配置；版本不可覆盖，重跑时同步修改三个 v3 标识。
 run_id: gharchive-smoke-2016-v3
-workspace: /Volumes/T0/Starcat/training/gharchive-smoke-2016-v3
-registry: /Volumes/T0/Starcat/training/registry
+workspace: ../workspace/training/gharchive-smoke-2016-v3
+registry: ../workspace/training/registry
 random_seed: 42
 
 sources:
   - type: local_lake_partitions
-    workspace: /Volumes/T0/Starcat/bigquery/watch-events-2016-2026
+    workspace: ../workspace/bigquery/watch-events-2016-2026
     dataset: watch_events
     start_date: "2016-01-01"
     end_date: "2016-12-31"
     verify_checksums: true
   - type: local_lake_partitions
-    workspace: /Volumes/T0/Starcat/bigquery/push-events-2016-2026
+    workspace: ../workspace/bigquery/push-events-2016-2026
     dataset: push_events
     start_date: "2016-01-01"
     end_date: "2016-12-31"

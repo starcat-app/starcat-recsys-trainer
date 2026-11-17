@@ -1,13 +1,13 @@
 run_id: gharchive-local-2016-2026-v13
-workspace: /Volumes/T0/Starcat/training/gharchive-local-2016-2026-v13
-registry: /Volumes/T0/Starcat/training/registry
+workspace: ../workspace/training/gharchive-local-2016-2026-v13
+registry: ../workspace/training/registry
 random_seed: 42
 # 仅在上一 run 已完整生成 Canonical、后续节点失败时启用：
-# resume_canonical_manifest: /Volumes/T0/Starcat/training/<previous>/runs/<previous>/canonical/manifest.json
+# resume_canonical_manifest: ../workspace/training/<previous>/runs/<previous>/canonical/manifest.json
 
 sources:
   - type: local_lake_partitions
-    workspace: /Volumes/T0/Starcat/bigquery/watch-events-2016-2026
+    workspace: ../workspace/bigquery/watch-events-2016-2026
     dataset: watch_events
     start_date: "2016-01-01"
     end_date: "2026-08-25"
@@ -16,7 +16,7 @@ sources:
     repo_ids_from_canonical: true
     repository_limit: 5000
     maximum_requests: 5000
-    cache_directory: /Volumes/T0/Starcat/training/cache/github-metadata
+    cache_directory: ../workspace/training/cache/github-metadata
     # 仅用于本次失败 run 的续跑；日常周期训练保持 false，让 ETag 刷新 metadata。
     reuse_cached_payloads: true
     token_env: GITHUB_TOKEN

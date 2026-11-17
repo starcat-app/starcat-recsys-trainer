@@ -1,11 +1,11 @@
 run_id: gharchive-local-2016-20261031-v16-15k
-workspace: /Volumes/T0/Starcat/training/gharchive-local-2016-20261031-v16-15k
-registry: /Volumes/T0/Starcat/training/registry
+workspace: ../workspace/training/gharchive-local-2016-20261031-v16-15k
+registry: ../workspace/training/registry
 random_seed: 42
 
 sources:
   - type: local_lake_partitions
-    workspace: /Volumes/T0/Starcat/bigquery/watch-events-2016-2026
+    workspace: ../workspace/bigquery/watch-events-2016-2026
     dataset: watch_events
     start_date: "2016-01-01"
     end_date: "2026-10-31"
@@ -14,7 +14,7 @@ sources:
     repo_ids_from_canonical: true
     repository_limit: 15000
     maximum_requests: 15000
-    cache_directory: /Volumes/T0/Starcat/training/cache/github-metadata
+    cache_directory: ../workspace/training/cache/github-metadata
     # v16 是候选扩容实验；先由独立预填任务补齐共享缓存，正式 run 复用载荷避免再次限流。
     reuse_cached_payloads: true
     token_env: GITHUB_TOKEN

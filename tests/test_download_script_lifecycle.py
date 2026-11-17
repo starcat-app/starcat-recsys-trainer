@@ -8,10 +8,43 @@ import subprocess
 import time
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ENTRY_SCRIPT = REPO_ROOT / "scripts" / "download-push-events.sh"
 WATCH_ENTRY_SCRIPT = REPO_ROOT / "scripts" / "download-watch-events.sh"
 COMMON_SCRIPT = REPO_ROOT / "scripts" / "lib" / "bigquery-download-common.sh"
+
+
+@pytest.mark.parametrize("event", ["watch", "push"])
+@pytest.mark.parametrize("configured_by", ["default", "file", "environment"])
+def test_download_volume_configuration(tmp_path: Path, event: str, configured_by: str) -> None:
+    """真实入口应优先使用环境，再读私有文件；不依赖维护者本机配置。"""
+    scripts = tmp_path / "scripts"
+    (scripts / "lib").mkdir(parents=True)
+    (tmp_path / "configs").mkdir()
+    entry = scripts / f"download-{event}-events.sh"
+    entry.write_text((REPO_ROOT / "scripts" / entry.name).read_text())
+    (scripts / "lib" / COMMON_SCRIPT.name).write_text(
+        'bigquery_download_main() { printf "%s\\n" "$VOLUME_ROOT"; }\n'
+    )
+    expected = "/Volumes/StarcatData"
+    if configured_by != "default":
+        expected = str(tmp_path / "private-volume")
+        (tmp_path / "configs/data-volume.local").write_text(expected + "\n")
+    environment = os.environ.copy()
+    environment.pop(f"STARCAT_{event.upper()}_VOLUME_ROOT", None)
+    if configured_by == "environment":
+        expected = str(tmp_path / "override-volume")
+        environment[f"STARCAT_{event.upper()}_VOLUME_ROOT"] = expected
+    completed = subprocess.run(
+        ["bash", str(entry), "status"],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert completed.stdout.strip() == expected
 
 
 def test_status_json_reports_persisted_last_exit(tmp_path: Path) -> None:

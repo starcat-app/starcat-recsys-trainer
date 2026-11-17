@@ -1,11 +1,11 @@
 run_id: gharchive-local-2016-20261031-v14
-workspace: /Volumes/T0/Starcat/training/gharchive-local-2016-20261031-v14
-registry: /Volumes/T0/Starcat/training/registry
+workspace: ../workspace/training/gharchive-local-2016-20261031-v14
+registry: ../workspace/training/registry
 random_seed: 42
 
 sources:
   - type: local_lake_partitions
-    workspace: /Volumes/T0/Starcat/bigquery/watch-events-2016-2026
+    workspace: ../workspace/bigquery/watch-events-2016-2026
     dataset: watch_events
     start_date: "2016-01-01"
     end_date: "2026-10-31"
@@ -14,7 +14,7 @@ sources:
     repo_ids_from_canonical: true
     repository_limit: 5000
     maximum_requests: 5000
-    cache_directory: /Volumes/T0/Starcat/training/cache/github-metadata
+    cache_directory: ../workspace/training/cache/github-metadata
     # 周期训练必须允许 ETag 刷新，避免把 8 月以前的仓库 metadata 带进 11 月模型。
     reuse_cached_payloads: false
     token_env: GITHUB_TOKEN

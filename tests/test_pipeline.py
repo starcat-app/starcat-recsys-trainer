@@ -351,7 +351,7 @@ def test_builds_local_lake_partition_connector(tmp_path: Path) -> None:
     connector = _source_connector(
         {
             "type": "local_lake_partitions",
-            "workspace": "/Volumes/T0/Starcat/bigquery/watch-events-2016-2026",
+            "workspace": str(tmp_path / "watch-events"),
             "dataset": "watch_events",
             "start_date": "2016-01-01",
             "end_date": "2026-08-25",

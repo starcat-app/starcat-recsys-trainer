@@ -10,7 +10,7 @@ expanded_catalog: /local/expanded/repositories.parquet
 initial_bundle: /local/last-published/bundle
 initial_watermark: '2026-10-31'
 api_root: /local/starcat-recommend-api
-base_url: https://starcat-api.fly.dev
+base_url: http://127.0.0.1:5005
 publish_key_file: /local/private/recommend-publish.key
 query_key_file: /local/private/recommend-query.key
 

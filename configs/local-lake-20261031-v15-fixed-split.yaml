@@ -1,15 +1,15 @@
 run_id: gharchive-local-2016-20261031-v15-fixed-split
-workspace: /Volumes/T0/Starcat/training/gharchive-local-2016-20261031-v15-fixed-split
-registry: /Volumes/T0/Starcat/training/registry
+workspace: ../workspace/training/gharchive-local-2016-20261031-v15-fixed-split
+registry: ../workspace/training/registry
 random_seed: 42
 
 # v15 复用 v14 刚生成的完整 Canonical：只对比“数据水位更新”，
 # 不重扫 Raw，也不重新请求 GitHub metadata。
-resume_canonical_manifest: /Volumes/T0/Starcat/training/gharchive-local-2016-20261031-v14/runs/gharchive-local-2016-20261031-v14/canonical/manifest.json
+resume_canonical_manifest: ../workspace/training/gharchive-local-2016-20261031-v14/runs/gharchive-local-2016-20261031-v14/canonical/manifest.json
 
 sources:
   - type: local_lake_partitions
-    workspace: /Volumes/T0/Starcat/bigquery/watch-events-2016-2026
+    workspace: ../workspace/bigquery/watch-events-2016-2026
     dataset: watch_events
     start_date: "2016-01-01"
     end_date: "2026-10-31"
@@ -18,7 +18,7 @@ sources:
     repo_ids_from_canonical: true
     repository_limit: 5000
     maximum_requests: 5000
-    cache_directory: /Volumes/T0/Starcat/training/cache/github-metadata
+    cache_directory: ../workspace/training/cache/github-metadata
     reuse_cached_payloads: true
     token_env: GITHUB_TOKEN
     api_version: "2026-03-10"
