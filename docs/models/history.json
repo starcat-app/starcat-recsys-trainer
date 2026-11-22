@@ -723,6 +723,103 @@
       "status": "published",
       "summary": null,
       "training": null
+    },
+    {
+      "completed_at": "2026-11-22T03:26:13.109090+00:00",
+      "config_hash": "e26770cb6c107ea307103a90e7a5c29ac51d0bb27b01ee546ca5f258b1f64175",
+      "created_at": "2026-11-22T03:25:49.257370+00:00",
+      "database_bytes": 239235072,
+      "decision": {
+        "candidate": {
+          "catalog_recall": 0.04779933743492665,
+          "catalog_truth_count": 2192,
+          "coverage": 0.13090695626651014,
+          "empty_result_rate": 0.0,
+          "evaluated_subjects": 2752,
+          "mrr@20": 0.007342350673657148,
+          "ndcg@20": 0.013535968157694908,
+          "recall@20": 0.03670058139534884,
+          "skipped_subjects": 0,
+          "truth_catalog_coverage": 0.769933263083948,
+          "truth_count": 2847
+        },
+        "checks": {
+          "empty_rate_at_most_10_percent": true,
+          "empty_rate_not_higher": true,
+          "finite_metrics": true,
+          "minimum_5000_subjects": false,
+          "ndcg_not_lower": true,
+          "recall_not_lower": true,
+          "same_population": true
+        },
+        "incumbent": {
+          "catalog_recall": 0.04779933743492665,
+          "catalog_truth_count": 2192,
+          "coverage": 0.13090695626651014,
+          "empty_result_rate": 0.0,
+          "evaluated_subjects": 2752,
+          "mrr@20": 0.007342350673657148,
+          "ndcg@20": 0.013535968157694908,
+          "recall@20": 0.03670058139534884,
+          "skipped_subjects": 0,
+          "truth_catalog_coverage": 0.769933263083948,
+          "truth_count": 2847
+        },
+        "passed": false
+      },
+      "evaluated_model_checksum": "sha256:93a8edcb4c0ed59522c9083b5a5341880082fc2afd631a5396c6b9f54faaf37b",
+      "evaluation": {
+        "data_end": "2026-11-22T00:00:00+00:00",
+        "dataset_checksum": "sha256:8c890e8cc14d69413bce2d647b58d139d71831643e8cdcf7e421d4c7354fe67e",
+        "k": 20,
+        "maximum_seeds": 20,
+        "split": "test",
+        "train_end": "2026-11-15T00:00:00+00:00",
+        "validation_end": null
+      },
+      "evaluation_checksum": "sha256:314729cea237269efb6459d03202f8b6b4e047d109e8f3d90a22db1027cd6995",
+      "git_commit": "89f23d6ad90a6a8e7ec913ca3fc9b9c0afbfd146",
+      "manifest_checksum": "sha256:7da0d0191b5097554f23ab113874e9135b64441bab54e225443ad942ecc06b32",
+      "metrics": {
+        "catalog_recall": 0.04779933743492665,
+        "catalog_truth_count": 2192,
+        "coverage": 0.13090695626651014,
+        "empty_result_rate": 0.0,
+        "evaluated_subjects": 2752,
+        "mrr@20": 0.007342350673657148,
+        "ndcg@20": 0.013535968157694908,
+        "recall@20": 0.03670058139534884,
+        "skipped_subjects": 0,
+        "truth_catalog_coverage": 0.769933263083948,
+        "truth_count": 2847
+      },
+      "metrics_scope": "same_model",
+      "model_version": "weekly-20261121-20261122T030023873512-evaluated",
+      "raw_watermark": "2026-11-21",
+      "recommendation_edges": 1350558,
+      "release_url": null,
+      "repositories": 18839,
+      "run_id": "weekly-20261121-20261122T030023873512",
+      "selected_model": "hybrid_25",
+      "started_at": "2026-11-22T03:00:23.908568+00:00",
+      "status": "blocked",
+      "summary": null,
+      "training": {
+        "completed_at": "2026-11-22T03:23:49.039369+00:00",
+        "data_end": "2026-11-14T16:09:46+00:00",
+        "data_start": "2016-01-01T01:16:43+00:00",
+        "interactions": 2061913,
+        "parameters": {
+          "content_weight": 0.25,
+          "half_life_days": 365,
+          "maximum_pair_observations": 200000000,
+          "maximum_repositories_per_subject": 100,
+          "minimum_support": 0.5,
+          "top_k": 100
+        },
+        "started_at": "2026-11-22T03:22:54.392780+00:00",
+        "subjects": 59940
+      }
     }
   ],
   "schema_version": 1
