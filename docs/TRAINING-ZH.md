@@ -109,6 +109,10 @@ uv run python -m starcat_recsys.weekly run --config workspace/operator/weekly.ya
 小数据集可能长期受阻；系统累积留出窗口，不降低门槛。隔离 API 验收使用其已锁定
 Go 依赖，不要求额外克隆同级 `starcat-api-kit`。
 
+每月首个周日的同一任务也会测试最多替换 10% 成员的训练名单。新名单须在同一批独立
+评估账号上胜过按相同时间重训的旧名单，并通过生产门禁。`status` 的 `monthly_roster`
+显示最近一次换人的结果，详见[每周自动训练运维指南](每周自动训练运维指南.md#每月训练名单对照)。
+
 macOS 将 `STARCAT_WEEKLY_RECOMMENDATION_CONFIG` 设置为配置绝对路径后，可使用原
 LaunchAgent 安装脚本。Linux 定时器直接调用 Python 入口，不运行 caffeinate 封装。
 到期判断使用 Asia/Shanghai；安装或首次加载可能立即补跑到期任务。

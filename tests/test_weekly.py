@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import plistlib
 import subprocess
 from datetime import UTC, date, datetime
@@ -14,6 +15,8 @@ import pytest
 
 from starcat_recsys.artifacts import artifact_for, sha256_file, write_json_atomic
 from starcat_recsys.interfaces import TaskContext
+from starcat_recsys.monthly_roster import propose_roster
+from starcat_recsys.recommendations import artifact_path
 from starcat_recsys.weekly import WeeklyRun, due_slot
 from starcat_recsys.weekly_data import prepare_datasets, verify_raw
 from starcat_recsys.weekly_training import quality_decision
@@ -175,6 +178,83 @@ def test_resume_reuses_only_verified_completed_stages(tmp_path: Path) -> None:
     Path(artifact.uri[7:]).write_text(json.dumps({"corrupt": True}))
     with pytest.raises(ValueError, match="摘要"):
         resumed.step("example", action)
+
+
+def test_monthly_roster_only_uses_past_and_excludes_both_cohorts(tmp_path: Path) -> None:
+    """换出者也不能当考生；留出周才凑足五个历史仓库的新人不能入选。"""
+
+    def subject(actor: int) -> str:
+        return hashlib.sha256(f"gh_archive:{actor}".encode()).hexdigest()
+
+    cutoff = datetime(2026, 11, 1, tzinfo=UTC)
+    frozen = tmp_path / "old.parquet"
+    core = tmp_path / "core.parquet"
+    pq.write_table(
+        pa.Table.from_pylist(
+            [
+                {
+                    "source": "gh_archive",
+                    "split": "train",
+                    "source_subject_id": subject(n),
+                    "sample_weight": 0.73,
+                }
+                for n in range(1, 21)
+            ]
+        ),
+        frozen,
+    )
+    pq.write_table(pa.table({"repo_id": list(range(1, 205))}), core)
+    paths = []
+    for day, entries in [
+        ("2026-09-15", [(20, range(1, 6)), (21, range(1, 5)), (24, range(1, 6))]),
+        (
+            "2026-10-31",
+            [(n, [1]) for n in range(1, 20)] + [(21, [5]), (22, range(1, 5)), (23, range(1, 202))],
+        ),
+        ("2026-11-01", [(20, [9]), (21, [9]), (22, [5]), (24, [9])]),
+    ]:
+        path = tmp_path / f"watch-events-{day.replace('-', '')}.parquet"
+        pq.write_table(
+            pa.Table.from_pylist(
+                [
+                    {
+                        "actor_id": actor,
+                        "repo_id": repo,
+                        "created_at": datetime.fromisoformat(day).replace(tzinfo=UTC),
+                    }
+                    for actor, repos in entries
+                    for repo in repos
+                ]
+            ),
+            path,
+        )
+        paths.append(path)
+    context = TaskContext("monthly", tmp_path, "test", 7)
+    roster = propose_roster(context, frozen, core, paths, cutoff)[0]
+    assert roster.metadata["replaced"] == 1  # 不足两个合格名额时不补凑
+    members = {
+        r["source_subject_id"]: r["sample_weight"]
+        for r in pq.read_table(artifact_path(roster)).to_pylist()
+    }
+    assert set(members) == {subject(i) for i in [*range(1, 20), 21]}
+    assert members[subject(1)] == pytest.approx(0.73)
+    assert members[subject(21)] == pytest.approx(1 / math.log2(7))
+    data = prepare_datasets(
+        context,
+        {
+            "frozen_training_dataset": str(frozen),
+            "core_catalog": str(core),
+            "expanded_catalog": str(core),
+        },
+        paths,
+        cutoff,
+        datetime(2026, 11, 2, tzinfo=UTC),
+        artifact_path(roster),
+    )
+    evaluation = next(item for item in data if item.kind == "evaluation_dataset")
+    assert set(
+        pq.read_table(artifact_path(evaluation)).column("source_subject_id").to_pylist()
+    ) == {subject(24)}
 
 
 def test_cli_preserves_safe_missing_partition_reason(

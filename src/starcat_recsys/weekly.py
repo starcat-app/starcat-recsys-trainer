@@ -14,7 +14,7 @@ import json
 import os
 import shutil
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -27,6 +27,7 @@ from starcat_recsys.artifacts import artifact_for, sha256_file, write_json_atomi
 from starcat_recsys.bundle import verify_bundle
 from starcat_recsys.evaluation import EvaluationConfig, OfflineEvaluator
 from starcat_recsys.interfaces import Artifact, TaskContext
+from starcat_recsys.monthly_roster import propose_roster
 from starcat_recsys.recommendations import artifact_path
 from starcat_recsys.trainers.content_index import ContentIndexTrainer
 from starcat_recsys.weekly_data import RawValidationError, prepare_datasets, utc_day_end, verify_raw
@@ -74,6 +75,11 @@ class WeeklyRun:
         target: date,
         slot: str,
     ) -> None:
+        if "active_roster" in state:
+            roster = Artifact(**state["active_roster"])
+            if sha256_file(artifact_path(roster)) != roster.checksum:
+                raise ValueError("已发布名单摘要不符")
+            config = {**config, "frozen_training_dataset": str(artifact_path(roster))}
         self.config = config
         self.state = state
         self.state_file = state_file
@@ -174,6 +180,51 @@ class WeeklyRun:
         print(json.dumps({"stage": name, "status": "completed"}), flush=True)
         return artifacts
 
+    def monthly_candidate(self, paths: list[Path], cutoff: datetime) -> Artifact | None:
+        """一个月只提案一次；跨周积样和断点恢复必须拿回原名单，不得按成绩重新选人。"""
+        pending = self.state.get("pending_roster")
+        month = self.slot[:7]
+        if pending is None:
+            if (
+                date.fromisoformat(self.slot).day > 7
+                or self.state.get("last_roster_month") == month
+            ):
+                return None
+            proposal = self.step(
+                "roster",
+                lambda c: propose_roster(
+                    c,
+                    Path(self.config["frozen_training_dataset"]),
+                    Path(self.config["core_catalog"]),
+                    paths,
+                    cutoff,
+                ),
+            )
+            self.state["last_roster_month"] = month
+            self.state["monthly_roster"] = {
+                "month": month,
+                "status": "evaluating" if proposal else "unchanged",
+                "proposed_replacements": proposal[0].metadata["replaced"] if proposal else 0,
+            }
+            if not proposal:
+                self.save("running")
+                return None
+            pending = {
+                "artifact": asdict(proposal[0]),
+                "month": month,
+                "inputs": self.record["input_checksums"],
+            }
+            self.state["pending_roster"] = pending
+            self.save("running")
+        roster = Artifact(**pending["artifact"])
+        if (
+            roster.metadata["cutoff"] != cutoff.isoformat()
+            or pending["inputs"] != self.record["input_checksums"]
+            or sha256_file(artifact_path(roster)) != roster.checksum
+        ):
+            raise ValueError("待评估名单、留出起点或目录发生变化")
+        return roster
+
     def execute(self) -> dict[str, Any]:
         """数据、评估、产物和接口检查顺序固定，只有所有证据通过才执行最终交付。"""
         config = self.config
@@ -214,8 +265,12 @@ class WeeklyRun:
         raw = self.step("raw", raw_stage)[0]
         raw_records = _read_json(artifact_path(raw))["partitions"]
         paths = [Path(config["raw_root"]) / name for name in sorted(raw_records)]
+        roster = self.monthly_candidate(paths, train_end)
         datasets = self.step(
-            "data", lambda c: prepare_datasets(c, config, paths, train_end, data_end)
+            "data",
+            lambda c: prepare_datasets(
+                c, config, paths, train_end, data_end, artifact_path(roster) if roster else None
+            ),
         )
         models = self.step(
             "models",
@@ -229,6 +284,58 @@ class WeeklyRun:
                 c, [*datasets, selected, previous_model]
             ),
         )[0]
+        promote = False
+        if roster:
+            # 保留旧名单的正常周训输出。新名单只有赢过同水位对照、也不差于线上才可接替。
+            challenger_data = [
+                replace(item, kind=item.kind.removeprefix("challenger_"))
+                for item in datasets
+                if item.kind not in {"training_dataset", "refit_dataset"}
+            ]
+            control = replace(selected, metadata={**selected.metadata, "model": "roster_control"})
+            content = next(item for item in models if item.metadata["model"] == "content")
+            challenger = self.step(
+                "roster_models", lambda c: train_model(c, challenger_data, train_end, content)
+            )[-1]
+            trial_metrics = self.step(
+                "roster_evaluation",
+                lambda c: OfflineEvaluator(
+                    EvaluationConfig(split="test", maximum_seeds=20)
+                ).evaluate(c, [*challenger_data, challenger, control, previous_model]),
+            )[0]
+            report = _read_json(artifact_path(trial_metrics))
+            trial = quality_decision(report)
+            comparison = quality_decision(
+                {
+                    "models": {
+                        "hybrid_25": trial["candidate"],
+                        "incumbent": report["models"]["roster_control"],
+                    }
+                }
+            )
+            improved = any(
+                comparison["candidate"][key] > comparison["incumbent"][key]
+                for key in ("recall@20", "ndcg@20")
+            )
+            promote = trial["passed"] and comparison["passed"] and improved
+            self.state["monthly_roster"].update(
+                status="waiting_for_samples"
+                if not trial["checks"]["minimum_5000_subjects"]
+                else "awaiting_publication"
+                if promote
+                else "kept_current",
+                evaluated_subjects=trial["candidate"]["evaluated_subjects"],
+            )
+            self.record["roster_trial"] = {
+                "month": self.state["pending_roster"]["month"],
+                "replaced": roster.metadata["replaced"],
+                "strict_improvement": improved,
+                "eligible_for_promotion": promote,
+                "against_control": comparison,
+                "against_online": trial,
+            }
+            if promote:
+                datasets, selected, metrics = challenger_data, challenger, trial_metrics
         expanded = artifact_for(Path(config["expanded_catalog"]), "dataset_repositories", {})
         index = self.step("index", lambda c: ContentIndexTrainer().train(c, [expanded]))[0]
         candidate = self.step(
@@ -261,6 +368,10 @@ class WeeklyRun:
         decision["passed"] = decision["passed"] and coverage["passed"]
         self.step("decision", lambda c: _report(c, "decision", decision))
         if not decision["passed"]:
+            if decision["checks"]["minimum_5000_subjects"]:
+                self.state.pop("pending_roster", None)
+                if roster:
+                    self.state["monthly_roster"]["status"] = "kept_current"
             self.save("blocked", decision=decision)
             return {"status": "blocked", **decision}
         content = next(item for item in models if item.metadata["model"] == "content")
@@ -286,6 +397,9 @@ class WeeklyRun:
         )[0]
         final_coverage = check_coverage(artifact_path(final).parent, incumbent)
         if not final_coverage["passed"]:
+            self.state.pop("pending_roster", None)
+            if roster:
+                self.state["monthly_roster"]["status"] = "kept_current"
             self.save("blocked", reason="refit_coverage", decision=final_coverage)
             return {"status": "blocked", "reason": "refit_coverage", **final_coverage}
         self.step(
@@ -298,6 +412,8 @@ class WeeklyRun:
         )
         if source_checksums() != self.sources:
             raise ValueError("运行期间源码已变化，禁止发布")
+        if roster and sha256_file(artifact_path(roster)) != roster.checksum:
+            raise ValueError("运行期间月度名单发生变化")
         for key, checksum in self.record["input_checksums"].items():
             if sha256_file(Path(config[key])) != checksum:
                 raise ValueError("运行期间固定主体或 metadata 快照已变化")
@@ -318,6 +434,10 @@ class WeeklyRun:
             published_watermark=self.target.isoformat(),
             published_version=version,
         )
+        if promote and roster:
+            self.state["active_roster"] = asdict(roster)
+            self.state["monthly_roster"]["status"] = "activated"
+        self.state.pop("pending_roster", None)
         self.state.pop("evaluation_train_end", None)
         self.save("published")
         return {
@@ -412,6 +532,7 @@ def main() -> int:
                     "published_watermark",
                     "published_version",
                     "distribution",
+                    "monthly_roster",
                 ]
                 if key in state
             }

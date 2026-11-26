@@ -62,6 +62,7 @@ def prepare_datasets(
     paths: list[Path],
     train_end: datetime,
     data_end: datetime,
+    challenger: Path | None = None,
 ) -> list[Artifact]:
     """冻结训练人群与新时间留出；训练、评估均使用首次关系，禁止未来行为进入 train。
 
@@ -86,6 +87,13 @@ def prepare_datasets(
         ).fetchone()
         if foreign and foreign[0]:
             raise ValueError("每周 WatchEvent 训练只允许 gh_archive 固定主体")
+        # 先取两份名单的并集：同一份首次关系表供两组训练使用，评估排除整个并集。
+        connection.execute("CREATE TEMP VIEW excluded AS SELECT source_subject_id FROM weights")
+        if challenger is not None:
+            connection.read_parquet(str(challenger)).create_view("new_weights")
+            connection.execute("""CREATE OR REPLACE TEMP VIEW excluded AS
+                SELECT source_subject_id FROM weights
+                UNION SELECT source_subject_id FROM new_weights""")
         connection.execute("""
             CREATE TEMP VIEW events AS
             SELECT sha256('gh_archive:' || CAST(actor_id AS VARCHAR)) AS source_subject_id,
@@ -107,7 +115,7 @@ def prepare_datasets(
             CREATE TEMP TABLE first_pairs AS
             SELECT e.source_subject_id, e.repo_id, min(e.occurred_at) AS occurred_at
             FROM events e
-            INNER JOIN (SELECT source_subject_id FROM weights
+            INNER JOIN (SELECT source_subject_id FROM excluded
                 UNION SELECT source_subject_id FROM recent_subjects) s USING(source_subject_id)
             INNER JOIN catalog USING(repo_id)
             WHERE e.occurred_at < ?
@@ -115,35 +123,34 @@ def prepare_datasets(
             """,
             [data_end],
         )
-        training = output / "interactions.parquet"
-        connection.execute(
-            f"""
-            COPY (SELECT 'gh_archive' AS source, p.*, p.occurred_at AS observed_at,
-                1.0::FLOAT AS source_weight, w.sample_weight, TRUE AS training_eligible,
-                'train' AS split
-            FROM first_pairs p INNER JOIN weights w USING(source_subject_id)
-            INNER JOIN core USING(repo_id) WHERE p.occurred_at < ?)
-            TO {_literal(training)} (FORMAT PARQUET, COMPRESSION ZSTD)
-            """,
-            [train_end],
-        )
-        refit = output / "refit.parquet"
-        connection.execute(
-            f"""
-            COPY (SELECT 'gh_archive' AS source, p.*, p.occurred_at AS observed_at,
-                1.0::FLOAT AS source_weight, w.sample_weight, TRUE AS training_eligible,
-                'train' AS split
-            FROM first_pairs p INNER JOIN weights w USING(source_subject_id)
-            INNER JOIN core USING(repo_id))
-            TO {_literal(refit)} (FORMAT PARQUET, COMPRESSION ZSTD)
-            """
-        )
+        sets = [("weights", "")]
+        if challenger is not None:
+            sets.append(("new_weights", "challenger_"))
+        training_files = []
+        for weights_table, prefix in sets:
+            for name, kind, end in [
+                ("interactions", "training_dataset", train_end),
+                ("refit", "refit_dataset", data_end),
+            ]:
+                path = output / f"{prefix}{name}.parquet"
+                connection.execute(
+                    f"""
+                    COPY (SELECT 'gh_archive' AS source, p.*, p.occurred_at AS observed_at,
+                        1.0::FLOAT AS source_weight, w.sample_weight, TRUE AS training_eligible,
+                        'train' AS split FROM first_pairs p
+                    INNER JOIN {weights_table} w USING(source_subject_id)
+                    INNER JOIN core USING(repo_id) WHERE p.occurred_at < ?)
+                    TO {_literal(path)} (FORMAT PARQUET, COMPRESSION ZSTD)
+                """,
+                    [end],
+                )
+                training_files.append((path, prefix + kind))
         # 用训练前的完整参考目录历史量准入；既不按新目录重新选训练人，也不按成绩选评估人。
         connection.execute(
             """
             CREATE TEMP TABLE evaluation_subjects AS
             SELECT p.source_subject_id
-            FROM first_pairs p ANTI JOIN weights USING(source_subject_id)
+            FROM first_pairs p ANTI JOIN excluded USING(source_subject_id)
             GROUP BY p.source_subject_id
             HAVING count(*) FILTER (WHERE p.occurred_at < ? AND p.repo_id IN (
                 SELECT repo_id FROM core)) BETWEEN 5 AND 200
@@ -178,10 +185,9 @@ def prepare_datasets(
     finally:
         connection.close()
     return [
-        artifact_for(training, "training_dataset", counts),
+        *(artifact_for(path, kind, counts) for path, kind in training_files),
         artifact_for(evaluation, "evaluation_dataset", counts),
         artifact_for(Path(config["core_catalog"]), "dataset_repositories", {}),
-        artifact_for(refit, "refit_dataset", counts),
     ]
 
 

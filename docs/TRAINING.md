@@ -122,6 +122,11 @@ The second command is a real training and deployment command. It retains the
 blocked; the evaluation window accumulates rather than weakening the gate.
 No sibling `starcat-api-kit` checkout is required for the isolated Go API test.
 
+The first Sunday of each month also tests a roster with up to 10% of accounts
+replaced. It must beat a same-cutoff retrain of the current roster on a shared,
+independent holdout and pass the production gates. The `status` command reports
+the last roster decision under `monthly_roster`.
+
 On macOS, set `STARCAT_WEEKLY_RECOMMENDATION_CONFIG` to the absolute config path,
 then use the existing launch-agent installer. On Linux use the Python command
 from your scheduler; do not call the macOS caffeinate wrapper. The due-slot

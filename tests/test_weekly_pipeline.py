@@ -14,17 +14,20 @@ import pytest
 from starcat_recsys.artifacts import artifact_for, sha256_file, write_json_atomic
 from starcat_recsys.bundle import BundleConfig, LocalModelRegistry, ServingBundlePublisher
 from starcat_recsys.canonical import REPOSITORY_SCHEMA
-from starcat_recsys.interfaces import TaskContext
-from starcat_recsys.recommendations import write_recommendations
+from starcat_recsys.interfaces import Artifact, TaskContext
+from starcat_recsys.recommendations import artifact_path, write_recommendations
 from starcat_recsys.trainers.content_index import ContentIndexTrainer
 from starcat_recsys.weekly import WeeklyRun
 
 
-@pytest.mark.parametrize("evaluation_subjects", [4999, 5000])
+@pytest.mark.parametrize(
+    ("evaluation_subjects", "monthly"), [(4999, ""), (5000, ""), (5000, "tie"), (4999, "improve")]
+)
 def test_complete_weekly_workflow_obeys_population_gate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     evaluation_subjects: int,
+    monthly: str,
 ) -> None:
     """4999 人必须零上传；5000 人通过完整路径，并可复验激活后的断点状态。"""
     catalog = tmp_path / "catalog.parquet"
@@ -96,7 +99,7 @@ def test_complete_weekly_workflow_obeys_population_gate(
                     "sample_weight": 1.0,
                     "split": "train",
                 }
-                for i in range(1, 11)
+                for i in range(1, 101 if monthly else 11)
             ]
         ),
         frozen,
@@ -104,11 +107,35 @@ def test_complete_weekly_workflow_obeys_population_gate(
     raw = tmp_path / "raw"
     raw.mkdir()
     partitions = {}
-    for day in [1, 2, 3]:
+    # 月度夹具预留十个可换入的名额。新人按生产的固定哈希选定，而非按留出成绩选。
+    external = list(range(1000, 1000 + evaluation_subjects + (11 if monthly else 0)))
+    entrants = (
+        set(
+            sorted(
+                external,
+                key=lambda actor: hashlib.md5(
+                    hashlib.sha256(f"gh_archive:{actor}".encode()).hexdigest().encode()
+                ).hexdigest(),
+            )[:10]
+        )
+        if monthly
+        else set()
+    )
+    outsiders = sorted(set(external) - entrants)
+    for day in range(1, 11) if monthly else [1, 2, 3]:
         rows = []
-        actors = [*range(1, 11), *range(100, 100 + evaluation_subjects)]
+        actors = [*range(1, 91 if monthly else 11), *external]
         for actor in actors:
-            repos = range(1, 7 if actor < 100 else 6) if day == 1 else ([] if day == 2 else [6])
+            truth = 19 if monthly == "improve" else 6
+            if day == 1:
+                repos = [
+                    *range(1, 6),
+                    *([truth] if actor in entrants else [6] if actor < 1000 else []),
+                ]
+            elif actor in outsiders[-1:] and monthly:
+                repos = [truth] if day == 10 else []
+            else:
+                repos = [truth] if day == 3 else []
             for repo in repos:
                 rows.append(
                     {
@@ -118,7 +145,7 @@ def test_complete_weekly_workflow_obeys_population_gate(
                         "created_at": datetime(2026, 11, day, tzinfo=UTC),
                     }
                 )
-        path = raw / f"watch-events-2026110{day}.parquet"
+        path = raw / f"watch-events-202611{day:02d}.parquet"
         table = (
             pa.Table.from_pylist(rows)
             if rows
@@ -132,7 +159,7 @@ def test_complete_weekly_workflow_obeys_population_gate(
             )
         )
         pq.write_table(table, path)
-        partitions[f"2026110{day}"] = {
+        partitions[f"202611{day:02d}"] = {
             "checksum": sha256_file(path),
             "metadata": {"row_count": len(rows)},
         }
@@ -198,7 +225,13 @@ def test_complete_weekly_workflow_obeys_population_gate(
         httpx, "Client", lambda **kw: real_client(transport=httpx.MockTransport(respond), **kw)
     )
     state: dict[str, Any] = {}
-    task = WeeklyRun(config, state, tmp_path / "state.json", date(2026, 11, 3), "2026-11-01")
+    task = WeeklyRun(
+        config,
+        state,
+        tmp_path / "state.json",
+        date(2026, 11, 3),
+        "2026-11-01" if monthly else "2026-11-08",
+    )
     result = task.execute()
     if evaluation_subjects < 5000:
         assert result["status"] == "blocked"
@@ -207,9 +240,47 @@ def test_complete_weekly_workflow_obeys_population_gate(
         assert remote["active"] == "old"
         assert "publish" not in task.record["steps"]
         assert state["evaluation_train_end"] == "2026-11-02T00:00:00+00:00"
+        if monthly:
+            pending = state["pending_roster"]["artifact"]
+            assert "active_roster" not in state
+            task = WeeklyRun(
+                config, state, tmp_path / "state.json", date(2026, 11, 10), "2026-11-08"
+            )
+            with monkeypatch.context() as failure:
+
+                def offline(*args: Any, **kwargs: Any) -> Any:
+                    raise ConnectionError("模拟生产不可用")
+
+                failure.setattr("starcat_recsys.weekly.publish_with_rollback", offline)
+                with pytest.raises(ConnectionError):
+                    task.execute()
+            persisted = json.loads((tmp_path / "state.json").read_text())
+            assert "active_roster" not in persisted
+            assert persisted["pending_roster"]["artifact"] == pending
+            resumed = WeeklyRun(
+                config, persisted, tmp_path / "state.json", date(2026, 11, 10), "2026-11-08"
+            )
+            assert resumed.root == task.root
+            assert resumed.execute()["status"] == "published"
+            assert persisted["active_roster"] == pending
+            assert "pending_roster" not in persisted
+            assert "roster" not in resumed.record["steps"]  # 跨周没有重新选人
+            report = resumed.record["roster_trial"]
+            assert report["against_control"]["candidate"]["evaluated_subjects"] == 5000
+            assert report["strict_improvement"] and report["eligible_for_promotion"]
+            assert len(remote["uploads"]) == 1
+            next_week = WeeklyRun(
+                config, persisted, tmp_path / "state.json", date(2026, 11, 17), "2026-11-15"
+            )
+            assert next_week.config["frozen_training_dataset"] == str(
+                artifact_path(Artifact(**pending))
+            )
     else:
         assert result["status"] == "published"
         assert remote["uploads"] == [result["model_version"]]
         assert state["published_watermark"] == "2026-11-03"
         assert "evaluation_train_end" not in state
         assert json.loads((task.root / "publish/receipt.json").read_text())["passed"]
+        if monthly:
+            assert not task.record["roster_trial"]["strict_improvement"]
+            assert "active_roster" not in state and "pending_roster" not in state
